@@ -1,0 +1,17 @@
+[project]
+name = "cuhk-shenzhen-web2api"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "asdukw", email = "113411984+asdukw@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+cuhk-shenzhen-web2api = "cuhk_shenzhen_web2api:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
