@@ -7,7 +7,9 @@ authors = [
     { name = "asdukw", email = "113411984+asdukw@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "firecrawl",
+]
 
 [project.scripts]
 cuhk-shenzhen-web2api = "cuhk_shenzhen_web2api:main"

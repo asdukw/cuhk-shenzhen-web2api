@@ -8,3 +8,15 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets
+.env
+
+# Editors
+.vscode/
+
+# Crawl outputs
+data/
+
+# 本地 agent 配置与技能（不纳入版本控制）
+.agents/
