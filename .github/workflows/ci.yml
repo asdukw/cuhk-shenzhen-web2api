@@ -18,8 +18,8 @@ jobs:
       - name: Compile all modules
         run: uv run python -m compileall -q src/cuhk_shenzhen_web2api
       - name: Lint (ruff check)
-        run: uvx ruff check src
+        run: uv run ruff check src
       - name: Format (ruff format --check)
-        run: uvx ruff format --check src
+        run: uv run ruff format --check src
       - name: Type check (pyright)
-        run: uvx pyright
+        run: uv run pyright

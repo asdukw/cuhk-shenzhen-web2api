@@ -11,6 +11,12 @@ dependencies = [
     "firecrawl",
 ]
 
+[dependency-groups]
+dev = [
+    "ruff",
+    "pyright",
+]
+
 [project.scripts]
 cuhk-shenzhen-web2api = "cuhk_shenzhen_web2api:main"
 
