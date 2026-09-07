@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import cast
 
 from .cloud_browser import CloudBrowser
 
@@ -103,7 +104,7 @@ class ChatClient:
             return {status: r.status, body: JSON.parse(await r.text())}; });
           JSON.stringify(__r)
         """)
-        return result or {}
+        return cast(dict, result) if isinstance(result, dict) else {}
 
     def quota_pools(self) -> dict:
         result = self.cb.js_json("""
@@ -111,7 +112,7 @@ class ChatClient:
             return {status: r.status, body: JSON.parse(await r.text())}; });
           JSON.stringify(__r)
         """)
-        return result or {}
+        return cast(dict, result) if isinstance(result, dict) else {}
 
     def config(self, quota_pool: str | None = None) -> dict:
         pool = quota_pool or self.quota_pool
@@ -123,7 +124,7 @@ class ChatClient:
           JSON.stringify(__r)
         """.replace("__POOL", json.dumps(pool))
         )
-        return result or {}
+        return cast(dict, result) if isinstance(result, dict) else {}
 
     def models(self, quota_pool: str | None = None) -> list[str]:
         cfg = self.config(quota_pool)
@@ -181,7 +182,7 @@ class ChatClient:
         """,
             timeout=timeout,
         )
-        if res is None:
+        if not isinstance(res, dict):
             raise ChatAPIError("browser_execute failed; see script output")
         if res.get("status", 0) != 200:
             body = res.get("txt", "")
@@ -233,4 +234,4 @@ class ChatClient:
         """,
             timeout=timeout,
         )
-        return res or {"status": -1, "txt": ""}
+        return cast(dict, res) if isinstance(res, dict) else {"status": -1, "txt": ""}
