@@ -18,7 +18,7 @@ import sys
 from firecrawl import Firecrawl
 
 from cuhk_shenzhen_web2api import cloud_browser, env, login
-from cuhk_shenzhen_web2api.chat_client import ChatClient, parse_chat_stream
+from cuhk_shenzhen_web2api.chat_client import ChatClient
 from cuhk_shenzhen_web2api.paths import CHAT_DATA_DIR, SESSION_ID_FILE
 
 

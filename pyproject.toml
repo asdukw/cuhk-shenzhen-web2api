@@ -14,6 +14,12 @@ dependencies = [
 [project.scripts]
 cuhk-shenzhen-web2api = "cuhk_shenzhen_web2api:main"
 
+[tool.pyright]
+pythonVersion = "3.12"
+# Scripts are thin live-site runners whose real logic lives in the package.
+include = ["src/cuhk_shenzhen_web2api"]
+
+
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"

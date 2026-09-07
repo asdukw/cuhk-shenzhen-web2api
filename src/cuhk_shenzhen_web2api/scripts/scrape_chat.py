@@ -10,7 +10,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from firecrawl import FirecrawlApp
@@ -110,7 +110,7 @@ def main() -> None:
 
     out_dir = args.out
     out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     base = out_dir / f"chat_{ts}"
 
     meta = {

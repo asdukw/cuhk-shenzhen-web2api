@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync
+      - name: Compile all modules
+        run: uv run python -m compileall -q src/cuhk_shenzhen_web2api
+      - name: Lint (ruff check)
+        run: uvx ruff check src
+      - name: Format (ruff format --check)
+        run: uvx ruff format --check src
+      - name: Type check (pyright)
+        run: uvx pyright

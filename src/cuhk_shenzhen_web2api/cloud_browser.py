@@ -77,7 +77,7 @@ class CloudBrowser:
           JSON.stringify(__co.map(x=>({name:x.name, domain:x.domain, value:x.value,
             path:x.path, httpOnly:x.httpOnly, secure:x.secure})))
         """)
-        return data or []
+        return data if isinstance(data, list) else []
 
     def save_cookies(self, path: Path = COOKIES_FILE) -> Path:
         path.write_text(
@@ -94,7 +94,7 @@ class CloudBrowser:
           JSON.stringify({url: await page.url(), title: await page.title(),
             htmlLen: __h1.length, scripts:[...new Set(__sc)], links:[...new Set(__ln)]})
         """)
-        return data or {}
+        return data if isinstance(data, dict) else {}
 
     # ---- session lifecycle ----
 
@@ -102,14 +102,17 @@ class CloudBrowser:
         try:
             self.app.delete_browser(self.sid)
         except Exception:  # noqa: BLE001 - non-fatal on close
-            pass
+            return
 
 
 def create_session(
     app: Firecrawl, ttl: int = 1800, activity_ttl: int = 900
 ) -> CloudBrowser:
     session = app.browser(ttl=ttl, activity_ttl=activity_ttl)
-    return CloudBrowser(app, session.id)
+    sid = session.id
+    if sid is None:
+        raise RuntimeError("browser session created without an id")
+    return CloudBrowser(app, sid)
 
 
 def resume_session(app: Firecrawl, sid: str) -> CloudBrowser:

@@ -38,9 +38,9 @@ def login_flow(
     )
 
     # Stage 1: ADFS sign-in (two-step paginated form). No-op if already past it.
-    body = "var __u = %s; var __p = %s; var __seen = false;" % (
-        json.dumps(username),
-        json.dumps(password),
+    body = (
+        f"var __u = {json.dumps(username)}; var __p = {json.dumps(password)}; "
+        "var __seen = false;"
     )
     cb.js(
         f"""
