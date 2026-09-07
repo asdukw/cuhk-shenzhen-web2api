@@ -20,9 +20,13 @@ from cuhk_shenzhen_web2api.paths import CHAT_URL, COOKIES_FILE, SESSION_ID_FILE
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--resume", default=None, help="Resume existing Firecrawl browser sid")
+    parser.add_argument(
+        "--resume", default=None, help="Resume existing Firecrawl browser sid"
+    )
     parser.add_argument("--url", default=CHAT_URL, help="Login target URL")
-    parser.add_argument("--no-save", action="store_true", help="Do not persist session id/cookies")
+    parser.add_argument(
+        "--no-save", action="store_true", help="Do not persist session id/cookies"
+    )
     args = parser.parse_args()
 
     config = env.load_env()
@@ -44,7 +48,10 @@ def main() -> None:
 
     final_url = login.ensure_on_chat(cb, username, password, url=args.url)
     print("final   ", final_url, flush=True)
-    if final_url.startswith(("ERROR", "EXEC_ERR", "RATE_LIMIT")) or "/chat" not in final_url:
+    if (
+        final_url.startswith(("ERROR", "EXEC_ERR", "RATE_LIMIT"))
+        or "/chat" not in final_url
+    ):
         print("login did not land on /chat/", file=sys.stderr)
         raise SystemExit(1)
 
@@ -55,7 +62,9 @@ def main() -> None:
     scan = cb.page_scan()
     print(f"saved   {cb.sid} -> {SESSION_ID_FILE.name}")
     print(f"cookies -> {COOKIES_FILE.name} ({len(cb.cookies())})")
-    print(f"html    {scan.get('htmlLen', 0)} bytes | scripts {len(scan.get('scripts', []))}")
+    print(
+        f"html    {scan.get('htmlLen', 0)} bytes | scripts {len(scan.get('scripts', []))}"
+    )
 
 
 if __name__ == "__main__":

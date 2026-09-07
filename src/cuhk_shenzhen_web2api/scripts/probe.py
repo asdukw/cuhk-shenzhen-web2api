@@ -87,8 +87,11 @@ def step_assets(cb: cloud_browser.CloudBrowser) -> None:
     out = CHAT_DATA_DIR / "chat_assets.json"
     scan = cb.page_scan()
     (CHAT_DATA_DIR / "chat_assets.json").write_text(
-        json.dumps({"scripts": scan.get("scripts", []), "links": scan.get("links", [])},
-                   ensure_ascii=False, indent=2),
+        json.dumps(
+            {"scripts": scan.get("scripts", []), "links": scan.get("links", [])},
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     print(f"\n=== page assets === ({len(scan.get('scripts', []))} scripts)")
@@ -102,10 +105,20 @@ def step_bundle_surface(cb: cloud_browser.CloudBrowser, force: bool) -> None:
         print(f"\n=== bundle API surface === (cached {out.name})")
         return
 
-    patterns = ["/api/", "/message", "/conversation", "stream", "EventSource",
-                "client_id", "authorization", "Bearer", "quota", "/chat/assets"]
+    patterns = [
+        "/api/",
+        "/message",
+        "/conversation",
+        "stream",
+        "EventSource",
+        "client_id",
+        "authorization",
+        "Bearer",
+        "quota",
+        "/chat/assets",
+    ]
     pat_alt = "|".join(re.escape(p) for p in patterns).replace("/", r"\/")
-    code = f'''
+    code = f"""
       var __res = {{}};
       var __list = {json.dumps(ALL_BUNDLES)};
       var __pat = /(?:{pat_alt})[\\w/.\\-?=&]*/g;
@@ -130,7 +143,7 @@ def step_bundle_surface(cb: cloud_browser.CloudBrowser, force: bool) -> None:
         __res[__b] = {{len: __t.length, hits: __hits.slice(0, 12)}};
       }}
       JSON.stringify(__res)
-    '''
+    """
     raw = cb.js(code, timeout=180)
     try:
         surf = json.loads(raw)
@@ -154,7 +167,7 @@ def step_download_bundles(cb: cloud_browser.CloudBrowser, force: bool) -> None:
     if force:
         todo = SMALL_BUNDLES
 
-    code = f'''
+    code = f"""
       var __l = {json.dumps(todo)};
       var __chunks = [];
       for (var __i = 0; __i < __l.length; __i++) {{
@@ -170,7 +183,7 @@ def step_download_bundles(cb: cloud_browser.CloudBrowser, force: bool) -> None:
         __chunks.push(__u + "\\x00" + __gz.toString("base64"));
       }}
       JSON.stringify({{count: __chunks.length, chunks: __chunks}})
-    '''
+    """
     raw = cb.js(code, timeout=240)
     try:
         data = json.loads(raw)
@@ -193,7 +206,7 @@ def step_big_scan(cb: cloud_browser.CloudBrowser, force: bool) -> None:
         print(f"\n=== big bundle scan === (cached {out.name})")
         return
 
-    code = f'''
+    code = f"""
       var __l = {json.dumps(BIG_BUNDLES)};
       var __out = {{}};
       var __i2;
@@ -219,7 +232,7 @@ def step_big_scan(cb: cloud_browser.CloudBrowser, force: bool) -> None:
         __out[__u] = {{len: __t.length, found: __keep.slice(0, 200)}};
       }}
       JSON.stringify(__out)
-    '''
+    """
     raw = cb.js(code, timeout=240)
     try:
         data = json.loads(raw)
@@ -237,8 +250,12 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--resume", default=None, help="Resume existing Firecrawl browser sid")
-    parser.add_argument("--force", action="store_true", help="Re-download despite cached artifacts")
+    parser.add_argument(
+        "--resume", default=None, help="Resume existing Firecrawl browser sid"
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Re-download despite cached artifacts"
+    )
     args = parser.parse_args()
 
     config = env.load_env()
@@ -256,7 +273,9 @@ def main() -> None:
         cb = cloud_browser.create_session(app)
         print("created   ", cb.sid, flush=True)
 
-    final = login.ensure_on_chat(cb, env.chat_username(config), env.chat_password(config))
+    final = login.ensure_on_chat(
+        cb, env.chat_username(config), env.chat_password(config)
+    )
     if "/chat" not in (final or ""):
         print("not on /chat/:", final, file=sys.stderr)
         sys.exit(1)

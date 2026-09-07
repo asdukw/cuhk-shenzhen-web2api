@@ -23,7 +23,14 @@ _DEFAULT_PARAMS = {"tool_proxy": False}
 
 
 class ChatAPIError(RuntimeError):
-    def __init__(self, message: str, *, code: str | None = None, detail=None, status: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        detail=None,
+        status: int | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.detail = detail
@@ -91,29 +98,31 @@ class ChatClient:
     # ---- session/config reads ----
 
     def whoami(self) -> dict:
-        result = self.cb.js_json('''
+        result = self.cb.js_json("""
           var __r = await page.evaluate(async () => { const r = await fetch("/.auth/me/", {redirect:"manual"});
             return {status: r.status, body: JSON.parse(await r.text())}; });
           JSON.stringify(__r)
-        ''')
+        """)
         return result or {}
 
     def quota_pools(self) -> dict:
-        result = self.cb.js_json('''
+        result = self.cb.js_json("""
           var __r = await page.evaluate(async () => { const r = await fetch("/api/config_available_quotapools/");
             return {status: r.status, body: JSON.parse(await r.text())}; });
           JSON.stringify(__r)
-        ''')
+        """)
         return result or {}
 
     def config(self, quota_pool: str | None = None) -> dict:
         pool = quota_pool or self.quota_pool
-        result = self.cb.js_json('''
+        result = self.cb.js_json(
+            """
           var __u = "/config/?quota_pool=" + encodeURIComponent(__POOL);
           var __r = await page.evaluate(async (u) => { const r = await fetch(u);
             return {status: r.status, body: JSON.parse(await r.text())}; }, __u);
           JSON.stringify(__r)
-        '''.replace("__POOL", json.dumps(pool)))
+        """.replace("__POOL", json.dumps(pool))
+        )
         return result or {}
 
     def models(self, quota_pool: str | None = None) -> list[str]:
@@ -126,11 +135,20 @@ class ChatClient:
 
     # ---- conversation ----
 
-    def send_stream(self, content: str, *, approach_id: str, quota_pool: str | None = None,
-                    chat_session_id: str | None = None, project_id: str | None = None,
-                    parent_idx: int = -1, params: dict | None = None,
-                    image_ids: tuple[str, ...] = (), file_ids: tuple[str, ...] = (),
-                    timeout: int = 300) -> ChatReply:
+    def send_stream(
+        self,
+        content: str,
+        *,
+        approach_id: str,
+        quota_pool: str | None = None,
+        chat_session_id: str | None = None,
+        project_id: str | None = None,
+        parent_idx: int = -1,
+        params: dict | None = None,
+        image_ids: tuple[str, ...] = (),
+        file_ids: tuple[str, ...] = (),
+        timeout: int = 300,
+    ) -> ChatReply:
         """Send one user message to /chat/ and return the parsed stream reply.
 
         Use parent_idx=-1 + no chat_session_id to start a fresh session;
@@ -148,7 +166,8 @@ class ChatClient:
             "file_ids": list(file_ids),
             "quota_pool": pool,
         }
-        res = self.cb.js_json(f'''
+        res = self.cb.js_json(
+            f"""
           var __p = {json.dumps(payload)};
           var __r = await page.evaluate(async (p) => {{
             var csrf = document.cookie.split(";").map(s=>s.trim()).find(s=>s.indexOf("csrftoken=")===0);
@@ -159,7 +178,9 @@ class ChatClient:
             return {{status: resp.status, ct: resp.headers.get("content-type"), txt: await resp.text(), trace: resp.headers.get("Trace-Id")}};
           }}, __p);
           JSON.stringify(__r)
-        ''', timeout=timeout)
+        """,
+            timeout=timeout,
+        )
         if res is None:
             raise ChatAPIError("browser_execute failed; see script output")
         if res.get("status", 0) != 200:
@@ -181,14 +202,24 @@ class ChatClient:
         return self.send_stream(content, approach_id=approach_id, **kwargs)
 
     def abort(self, chat_session_id: str, message_idx: int) -> dict:
-        return self._post_json(ABORT_ENDPOINT, {"chat_session_id": chat_session_id, "message_idx": message_idx})
+        return self._post_json(
+            ABORT_ENDPOINT,
+            {"chat_session_id": chat_session_id, "message_idx": message_idx},
+        )
 
-    def recover(self, chat_session_id: str, message_idx: int, timeout: int = 300) -> ChatReply:
-        res = self._post_json(RECOVER_ENDPOINT, {"chat_session_id": chat_session_id, "message_idx": message_idx}, timeout=timeout)
+    def recover(
+        self, chat_session_id: str, message_idx: int, timeout: int = 300
+    ) -> ChatReply:
+        res = self._post_json(
+            RECOVER_ENDPOINT,
+            {"chat_session_id": chat_session_id, "message_idx": message_idx},
+            timeout=timeout,
+        )
         return parse_chat_stream(res.get("txt", ""))
 
     def _post_json(self, path: str, payload: dict, timeout: int = 120) -> dict:
-        res = self.cb.js_json(f'''
+        res = self.cb.js_json(
+            f"""
           var __p = {json.dumps(payload)};
           var __r = await page.evaluate(async (p) => {{
             var csrf = document.cookie.split(";").map(s=>s.trim()).find(s=>s.indexOf("csrftoken=")===0);
@@ -199,5 +230,7 @@ class ChatClient:
             return {{status: resp.status, ct: resp.headers.get("content-type"), txt: await resp.text()}};
           }}, __p);
           JSON.stringify(__r)
-        ''', timeout=timeout)
+        """,
+            timeout=timeout,
+        )
         return res or {"status": -1, "txt": ""}

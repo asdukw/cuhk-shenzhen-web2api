@@ -16,8 +16,13 @@ from .cloud_browser import CloudBrowser
 from .paths import CHAT_URL
 
 
-def login_flow(cb: CloudBrowser, username: str, password: str, url: str = CHAT_URL,
-               max_polls: int = 12) -> str:
+def login_flow(
+    cb: CloudBrowser,
+    username: str,
+    password: str,
+    url: str = CHAT_URL,
+    max_polls: int = 12,
+) -> str:
     """Idempotent multi-stage login: brings the page to the real /chat/ app.
 
     Stages (each tolerant of already-completed state):
@@ -29,12 +34,16 @@ def login_flow(cb: CloudBrowser, username: str, password: str, url: str = CHAT_U
     # Stage 0
     cb.js(
         f'await page.goto({json.dumps(url)}, {{waitUntil: "domcontentloaded"}}); '
-        f'await page.waitForTimeout(2500); await page.url()'
+        f"await page.waitForTimeout(2500); await page.url()"
     )
 
     # Stage 1: ADFS sign-in (two-step paginated form). No-op if already past it.
-    body = "var __u = %s; var __p = %s; var __seen = false;" % (json.dumps(username), json.dumps(password))
-    cb.js(f'''
+    body = "var __u = %s; var __p = %s; var __seen = false;" % (
+        json.dumps(username),
+        json.dumps(password),
+    )
+    cb.js(
+        f"""
       {body}
       try {{
         await page.waitForSelector("#userNameInput", {{timeout: 50000}});
@@ -47,10 +56,12 @@ def login_flow(cb: CloudBrowser, username: str, password: str, url: str = CHAT_U
         await page.waitForTimeout(9000);
       }} catch(e) {{}}
       JSON.stringify({{form: __seen, url: await page.url()}})
-    ''', timeout=150)
+    """,
+        timeout=150,
+    )
 
     # Stage 2: platform login (window only exists in the page, so page.evaluate)
-    cb.js('''
+    cb.js("""
       await page.evaluate(() => {
         const q = (sel) => { const el = document.querySelector(sel); if (el) { el.click(); return true; } return false; };
         q(".login-button");
@@ -62,7 +73,7 @@ def login_flow(cb: CloudBrowser, username: str, password: str, url: str = CHAT_U
       });
       await page.waitForTimeout(2500);
       await page.url()
-    ''')
+    """)
 
     # Poll until we land on /chat/
     for _ in range(max_polls):
@@ -75,7 +86,9 @@ def login_flow(cb: CloudBrowser, username: str, password: str, url: str = CHAT_U
     return cb.url()
 
 
-def ensure_on_chat(cb: CloudBrowser, username: str, password: str, url: str = CHAT_URL) -> str:
+def ensure_on_chat(
+    cb: CloudBrowser, username: str, password: str, url: str = CHAT_URL
+) -> str:
     """If the page is not on the chat app yet, run the login flow."""
     cur = cb.url()
     if cur and "/chat" in cur:

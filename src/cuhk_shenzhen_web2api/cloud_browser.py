@@ -24,7 +24,9 @@ RATE_SLEEP_SECONDS = 3.5  # free tier is ~3 browser-execute req/min
 
 
 class CloudBrowser:
-    def __init__(self, app: Firecrawl, sid: str, rate_sleep: float = RATE_SLEEP_SECONDS):
+    def __init__(
+        self, app: Firecrawl, sid: str, rate_sleep: float = RATE_SLEEP_SECONDS
+    ):
         self.app = app
         self.sid = sid
         self.rate_sleep = rate_sleep
@@ -39,7 +41,9 @@ class CloudBrowser:
         for attempt in range(retries):
             time.sleep(self.rate_sleep)
             try:
-                res = self.app.browser_execute(self.sid, code, language="node", timeout=timeout)
+                res = self.app.browser_execute(
+                    self.sid, code, language="node", timeout=timeout
+                )
             except Exception as exc:  # noqa: BLE001 - surface retryable API errors
                 if "Rate" in str(exc) and attempt < retries - 1:
                     time.sleep(5)
@@ -50,7 +54,9 @@ class CloudBrowser:
             return (res.result or res.stdout or "").strip()
         return "RATE_LIMIT"
 
-    def js_json(self, code: str, timeout: int = 120, retries: int = 6) -> dict | list | None:
+    def js_json(
+        self, code: str, timeout: int = 120, retries: int = 6
+    ) -> dict | list | None:
         """Run node code expected to return a JSON value."""
         raw = self.js(code, timeout=timeout, retries=retries)
         if not raw or raw.startswith(("ERROR", "EXEC_ERR", "RATE_LIMIT")):
@@ -66,11 +72,11 @@ class CloudBrowser:
         return self.js("await page.url()")
 
     def cookies(self) -> list[dict]:
-        data = self.js_json('''
+        data = self.js_json("""
           var __co = await page.context().cookies();
           JSON.stringify(__co.map(x=>({name:x.name, domain:x.domain, value:x.value,
             path:x.path, httpOnly:x.httpOnly, secure:x.secure})))
-        ''')
+        """)
         return data or []
 
     def save_cookies(self, path: Path = COOKIES_FILE) -> Path:
@@ -81,13 +87,13 @@ class CloudBrowser:
 
     def page_scan(self) -> dict:
         """Current URL + title + HTML length + script/link inventory."""
-        data = self.js_json('''
+        data = self.js_json("""
           var __h1 = await page.content();
           var __sc = [...__h1.matchAll(/<script[^>]+src=["']([^"']+)["']/g)].map(m=>m[1]);
           var __ln = [...__h1.matchAll(/<link[^>]+href=["']([^"']+)["']/g)].map(m=>m[1]);
           JSON.stringify({url: await page.url(), title: await page.title(),
             htmlLen: __h1.length, scripts:[...new Set(__sc)], links:[...new Set(__ln)]})
-        ''')
+        """)
         return data or {}
 
     # ---- session lifecycle ----
@@ -99,7 +105,9 @@ class CloudBrowser:
             pass
 
 
-def create_session(app: Firecrawl, ttl: int = 1800, activity_ttl: int = 900) -> CloudBrowser:
+def create_session(
+    app: Firecrawl, ttl: int = 1800, activity_ttl: int = 900
+) -> CloudBrowser:
     session = app.browser(ttl=ttl, activity_ttl=activity_ttl)
     return CloudBrowser(app, session.id)
 

@@ -80,7 +80,9 @@ def main() -> None:
         help="Authenticated session cookie(s), e.g. 'name1=val1; name2=val2'",
     )
     parser.add_argument(
-        "--wait-for", type=int, default=5000,
+        "--wait-for",
+        type=int,
+        default=5000,
         help="Milliseconds to wait for the SPA to boot",
     )
     args = parser.parse_args()

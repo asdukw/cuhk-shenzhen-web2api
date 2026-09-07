@@ -27,13 +27,24 @@ def main() -> None:
     parser.add_argument("message", help="User message")
     parser.add_argument("--model", default="claude-haiku-4-5", dest="approach_id")
     parser.add_argument("--pool", default="Students Pool", dest="quota_pool")
-    parser.add_argument("--session", default=None,
-                        help="Existing chat_session_id to continue, or 'new' (omit to start fresh)")
-    parser.add_argument("--parent", type=int, default=-1,
-                        help="parent_idx (previous turn's end message)")
+    parser.add_argument(
+        "--session",
+        default=None,
+        help="Existing chat_session_id to continue, or 'new' (omit to start fresh)",
+    )
+    parser.add_argument(
+        "--parent",
+        type=int,
+        default=-1,
+        help="parent_idx (previous turn's end message)",
+    )
     parser.add_argument("--resume", default=None, help="Resume Firecrawl browser sid")
-    parser.add_argument("--no-tools", action="store_true", dest="no_tools",
-                        help="Set params.tool_proxy=false")
+    parser.add_argument(
+        "--no-tools",
+        action="store_true",
+        dest="no_tools",
+        help="Set params.tool_proxy=false",
+    )
     args = parser.parse_args()
 
     config = env.load_env()
@@ -50,7 +61,9 @@ def main() -> None:
     cb = cloud_browser.resume_session(app, sid)
     print("session   ", sid, flush=True)
 
-    final = login.ensure_on_chat(cb, env.chat_username(config), env.chat_password(config))
+    final = login.ensure_on_chat(
+        cb, env.chat_username(config), env.chat_password(config)
+    )
     if "/chat" not in (final or ""):
         print("not on /chat/:", final, file=sys.stderr)
         sys.exit(1)
@@ -68,7 +81,8 @@ def main() -> None:
 
     CHAT_DATA_DIR.mkdir(parents=True, exist_ok=True)
     (CHAT_DATA_DIR / "last_stream.ndjson").write_text(
-        "\n".join(json.dumps(ev, ensure_ascii=False) for ev in reply.lines), encoding="utf-8"
+        "\n".join(json.dumps(ev, ensure_ascii=False) for ev in reply.lines),
+        encoding="utf-8",
     )
     summary = {
         "chat_session_id": reply.chat_session_id,
