@@ -71,6 +71,11 @@ class CloudBrowser:
     def url(self) -> str:
         return self.js("await page.url()")
 
+    def is_alive(self) -> bool:
+        """Cheap liveness probe: true unless the session is gone/errored."""
+        value = self.js("await page.url()", timeout=60, retries=2)
+        return not value.startswith(("EXEC_ERR", "ERROR", "RATE_LIMIT"))
+
     def cookies(self) -> list[dict]:
         data = self.js_json("""
           var __co = await page.context().cookies();
@@ -117,6 +122,25 @@ def create_session(
 
 def resume_session(app: Firecrawl, sid: str) -> CloudBrowser:
     return CloudBrowser(app, sid)
+
+
+def get_or_create_session(
+    app: Firecrawl,
+    sid: str | None = None,
+    ttl: int = 1800,
+    activity_ttl: int = 900,
+) -> CloudBrowser:
+    """Resume `sid` if it is still alive, otherwise create a fresh session.
+
+    One liveness probe call is consumed in the resumed case.
+    """
+    if sid:
+        cb = resume_session(app, sid)
+        if cb.is_alive():
+            return cb
+        print(f"session {sid} is expired/destroyed — creating a new one", flush=True)
+        cb.close()
+    return create_session(app, ttl=ttl, activity_ttl=activity_ttl)
 
 
 def load_session_id(path: Path = SESSION_ID_FILE) -> str | None:

@@ -6,7 +6,8 @@ data/chat_session/last_stream.ndjson / last_reply.json.
 
 Usage:
     python src/cuhk_shenzhen_web2api/scripts/send_message.py "你好" \
-        [--model claude-haiku-4-5] [--pool "Students Pool"] [--session SID]
+        [--model claude-haiku-4-5] [--pool "Students Pool"] [--session SID] \
+        [--continue] [--image x.png --file doc.pdf]
 """
 
 from __future__ import annotations
@@ -38,6 +39,26 @@ def main() -> None:
         default=-1,
         help="parent_idx (previous turn's end message)",
     )
+    parser.add_argument(
+        "--continue",
+        action="store_true",
+        dest="continue_turn",
+        help="Auto-continue the last conversation (reads last_reply.json)",
+    )
+    parser.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Local image to upload and attach (repeatable)",
+    )
+    parser.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Local file to upload and attach (repeatable)",
+    )
     parser.add_argument("--resume", default=None, help="Resume Firecrawl browser sid")
     parser.add_argument(
         "--no-tools",
@@ -58,8 +79,8 @@ def main() -> None:
     if not sid:
         print("no browser session — run scripts/login.py first", file=sys.stderr)
         sys.exit(1)
-    cb = cloud_browser.resume_session(app, sid)
-    print("session   ", sid, flush=True)
+    cb = cloud_browser.get_or_create_session(app, sid)
+    print("session   ", cb.sid, flush=True)
 
     final = login.ensure_on_chat(
         cb, env.chat_username(config), env.chat_password(config)
@@ -70,14 +91,52 @@ def main() -> None:
 
     client = ChatClient(cb, quota_pool=args.quota_pool)
     params = {"tool_proxy": False} if args.no_tools else None
-    reply = client.send_stream(
-        args.message,
-        approach_id=args.approach_id,
-        quota_pool=args.quota_pool,
-        chat_session_id=args.session,
-        parent_idx=args.parent,
-        params=params,
-    )
+
+    last_reply: dict = {}
+    last_file = CHAT_DATA_DIR / "last_reply.json"
+    if args.continue_turn and last_file.exists():
+        last_reply = json.loads(last_file.read_text(encoding="utf-8"))
+
+    if (
+        args.continue_turn
+        and last_reply.get("chat_session_id")
+        and last_reply.get("approach_msg_idx") is not None
+    ):
+        print(
+            f"continue session {last_reply['chat_session_id']} "
+            f"parent={last_reply['approach_msg_idx']}",
+            flush=True,
+        )
+    elif args.continue_turn:
+        print(
+            "--continue requested but no usable last_reply.json — starting fresh",
+            file=sys.stderr,
+        )
+
+    if args.image or args.file:
+        reply = client.send_with_files(
+            args.message,
+            approach_id=args.approach_id,
+            image_paths=tuple(args.image),
+            file_paths=tuple(args.file),
+            quota_pool=args.quota_pool,
+            chat_session_id=args.session or last_reply.get("chat_session_id"),
+            parent_idx=args.parent
+            if args.parent >= 0
+            else last_reply.get("approach_msg_idx", -1),
+            params=params,
+        )
+    else:
+        reply = client.send_stream(
+            args.message,
+            approach_id=args.approach_id,
+            quota_pool=args.quota_pool,
+            chat_session_id=args.session or last_reply.get("chat_session_id"),
+            parent_idx=args.parent
+            if args.parent >= 0
+            else last_reply.get("approach_msg_idx", -1),
+            params=params,
+        )
 
     CHAT_DATA_DIR.mkdir(parents=True, exist_ok=True)
     (CHAT_DATA_DIR / "last_stream.ndjson").write_text(

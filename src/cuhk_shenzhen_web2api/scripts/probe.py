@@ -266,12 +266,8 @@ def main() -> None:
 
     app = Firecrawl(api_key=api_key)
     sid = args.resume or cloud_browser.load_session_id(SESSION_ID_FILE)
-    if sid:
-        cb = cloud_browser.resume_session(app, sid)
-        print("session   ", sid, flush=True)
-    else:
-        cb = cloud_browser.create_session(app)
-        print("created   ", cb.sid, flush=True)
+    cb = cloud_browser.get_or_create_session(app, sid)
+    print("session   ", cb.sid, flush=True)
 
     final = login.ensure_on_chat(
         cb, env.chat_username(config), env.chat_password(config)

@@ -10,15 +10,23 @@ events: start / hb / msg / end.
 
 from __future__ import annotations
 
+import base64
 import json
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import cast
+from pathlib import Path
+from typing import Any, cast
 
 from .cloud_browser import CloudBrowser
 
 CHAT_ENDPOINT = "/chat/"
 ABORT_ENDPOINT = "/chat/abort/"
 RECOVER_ENDPOINT = "/chat/recover/"
+HISTORY_META_ENDPOINT = "/getNextHistoryMeta/"
+HISTORY_ITEM_ENDPOINT = "/getHistoryItem/"
+UPLOAD_FILE_ENDPOINT = "/uploadFile/"
+UPLOAD_MEDIA_ENDPOINT = "/uploadMedia/"
 
 _DEFAULT_PARAMS = {"tool_proxy": False}
 
@@ -56,21 +64,24 @@ class ChatReply:
 
 def parse_ndjson(text: str) -> list[dict]:
     """Split an application/x-ndjson+json body into events."""
-    events: list[dict] = []
+    return list(iter_ndjson(text))
+
+
+def iter_ndjson(text: str) -> Iterator[dict]:
+    """Yield parsed NDJSON events one line at a time (skips blank lines)."""
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
         try:
-            events.append(json.loads(line))
+            yield json.loads(line)
         except json.JSONDecodeError:
-            events.append({"_raw": line})
-    return events
+            yield {"_raw": line}
 
 
-def parse_chat_stream(text: str) -> ChatReply:
-    """Turn an NDJSON chat body into a ChatReply (concatenated text + tools)."""
-    reply = ChatReply(lines=parse_ndjson(text))
+def assemble_reply(events: Iterator[dict]) -> ChatReply:
+    """Fold an event stream into a ChatReply (concatenated text + tools)."""
+    reply = ChatReply(lines=[ev for ev in events])
     for ev in reply.lines:
         kind = ev.get("event")
         if kind == "start":
@@ -89,6 +100,11 @@ def parse_chat_stream(text: str) -> ChatReply:
             reply.ctx_token_cnt = ev.get("ctx_token_cnt")
             reply.context_truncated = ev.get("context_truncated")
     return reply
+
+
+def parse_chat_stream(text: str) -> ChatReply:
+    """Turn an NDJSON chat body into a ChatReply (concatenated text + tools)."""
+    return assemble_reply(iter_ndjson(text))
 
 
 class ChatClient:
@@ -202,6 +218,24 @@ class ChatClient:
         """Convenience wrapper around send_stream."""
         return self.send_stream(content, approach_id=approach_id, **kwargs)
 
+    def continue_stream(
+        self, content: str, *, approach_id: str, last: ChatReply, **kwargs
+    ) -> ChatReply:
+        """Continue a conversation from a previous ChatReply (or start event).
+
+        Uses the returned chat_session_id and the assistant message idx as the
+        parent, which is what the API requires for a follow-up turn.
+        """
+        if not last.chat_session_id or last.approach_msg_idx is None:
+            raise ChatAPIError("cannot continue: reply has no session/message index")
+        return self.send_stream(
+            content,
+            approach_id=approach_id,
+            chat_session_id=last.chat_session_id,
+            parent_idx=last.approach_msg_idx,
+            **kwargs,
+        )
+
     def abort(self, chat_session_id: str, message_idx: int) -> dict:
         return self._post_json(
             ABORT_ENDPOINT,
@@ -217,6 +251,109 @@ class ChatClient:
             timeout=timeout,
         )
         return parse_chat_stream(res.get("txt", ""))
+
+    # ---- history ----
+
+    def list_sessions(
+        self,
+        need: int = 30,
+        time_offset: int | None = None,
+        count_offset: int = 0,
+        includes_pinned: bool = True,
+    ) -> list[dict]:
+        """List past chat sessions with titles (recency-ordered)."""
+        res = self._post_json(
+            HISTORY_META_ENDPOINT,
+            {
+                "need": need,
+                "time_offset": time_offset
+                if time_offset is not None
+                else int(time.time() * 1000),
+                "count_offset": count_offset,
+                "includes_pinned": includes_pinned,
+            },
+        )
+        data = self._decode_json_body(res)
+        return data if isinstance(data, list) else []
+
+    def history_item(self, chat_session_id: str) -> dict:
+        """Fetch one conversation (messages array with role/items/self_idx)."""
+        res = self._post_json(
+            HISTORY_ITEM_ENDPOINT, {"chat_session_id": chat_session_id}
+        )
+        data = self._decode_json_body(res)
+        return data if isinstance(data, dict) else {}
+
+    # ---- media/native upload ----
+
+    def upload_path(self, path: str | Path, *, media: bool = False) -> str:
+        """Upload a local file to the chat service; return its media_id.
+
+        media=True goes to /uploadMedia/ (images/video), otherwise /uploadFile/.
+        The bytes are pushed through the browser session, so keep files modest.
+        """
+        p = Path(path)
+        payload = base64.b64encode(p.read_bytes()).decode("ascii")
+        endpoint = UPLOAD_MEDIA_ENDPOINT if media else UPLOAD_FILE_ENDPOINT
+        mime = _guess_mime(p)
+        res = self.cb.js_json(
+            f"""
+          var __b64 = {json.dumps(payload)};
+          var __mime = {json.dumps(mime)};
+          var __bin = atob(__b64);
+          var __arr = new Uint8Array(__bin.length);
+          for (var __i2 = 0; __i2 < __bin.length; __i2++) __arr[__i2] = __bin.charCodeAt(__i2);
+          var __blob = new Blob([__arr], {{type: __mime}});
+          var __r = await page.evaluate(async (blob) => {{
+            var csrf = document.cookie.split(";").map(s=>s.trim()).find(s=>s.indexOf("csrftoken=")===0);
+            var headers = {{"Content-Type": "application/octet-stream"}};
+            if (csrf) headers["X-CSRFToken"] = csrf.slice(10);
+            var resp = await fetch({json.dumps(endpoint)}, {{method: "POST", headers: headers,
+              body: blob, credentials: "include"}});
+            return {{status: resp.status, txt: await resp.text()}};
+          }}, __blob);
+          JSON.stringify(__r)
+        """,
+            timeout=240,
+        )
+        if not isinstance(res, dict):
+            raise ChatAPIError("upload failed: browser_execute error")
+        if res.get("status", 0) != 200:
+            raise ChatAPIError(
+                f"upload HTTP {res.get('status')}: {res.get('txt')}",
+                status=res.get("status"),
+            )
+        body = res.get("txt", "")
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ChatAPIError(f"upload bad response: {body[:200]}") from exc
+        media_id = data.get("media_id")
+        if not media_id:
+            raise ChatAPIError("upload response has no media_id", detail=data)
+        return media_id
+
+    def send_with_files(
+        self,
+        content: str,
+        *,
+        approach_id: str,
+        image_paths: tuple[str | Path, ...] = (),
+        file_paths: tuple[str | Path, ...] = (),
+        **kwargs,
+    ) -> ChatReply:
+        """Upload local images/files then send a message with them attached."""
+        image_ids = tuple(self.upload_path(p, media=True) for p in image_paths)
+        file_ids = tuple(self.upload_path(p) for p in file_paths)
+        return self.send_stream(
+            content,
+            approach_id=approach_id,
+            image_ids=image_ids,
+            file_ids=file_ids,
+            **kwargs,
+        )
+
+    # ---- helpers ----
 
     def _post_json(self, path: str, payload: dict, timeout: int = 120) -> dict:
         res = self.cb.js_json(
@@ -235,3 +372,37 @@ class ChatClient:
             timeout=timeout,
         )
         return cast(dict, res) if isinstance(res, dict) else {"status": -1, "txt": ""}
+
+    def _decode_json_body(self, res: dict) -> Any:
+        """Decode an application/json body from _post_json; raise on error."""
+        if res.get("status", 0) != 200:
+            raise ChatAPIError(
+                f"HTTP {res.get('status')}: {res.get('txt')}", status=res.get("status")
+            )
+        try:
+            return json.loads(res.get("txt", "") or "null")
+        except json.JSONDecodeError as exc:
+            raise ChatAPIError("invalid JSON response") from exc
+
+
+def _guess_mime(path: Path) -> str:
+    ext = path.suffix.lower()
+    mapping = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".pdf": "application/pdf",
+        ".doc": "application/msword",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xls": "application/vnd.ms-excel",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".ppt": "application/vnd.ms-powerpoint",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+        ".csv": "text/csv",
+        ".zip": "application/zip",
+    }
+    return mapping.get(ext, "application/octet-stream")
