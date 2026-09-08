@@ -225,6 +225,46 @@ async def chat(req: ChatRequest) -> dict[str, Any]:
     return _reply_summary(reply)
 
 
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """SSE streaming: yields NDJSON events as they arrive (text chunks, tools, end).
+
+    Response format: `data: <json>\n\n` per event. Client can parse incrementally.
+    """
+    from fastapi.responses import StreamingResponse
+
+    client = await _runtime()
+    slash = _slash(req.message, client)
+    if slash is not None:
+        return slash
+
+    async def event_generator():
+        # Run the blocking send_stream in thread pool
+        reply = await asyncio.to_thread(
+            client.send_stream,
+            req.message,
+            approach_id=req.approach_id or _default_model,
+            quota_pool=req.quota_pool,
+            chat_session_id=req.chat_session_id,
+            parent_idx=req.parent_idx,
+            project_id=req.project_id,
+            params={"tool_proxy": req.tool_proxy} if req.tool_proxy else None,
+        )
+        # Yield each parsed event as SSE
+        for ev in reply.lines:
+            import json
+
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        # Final sentinel
+        yield 'data: {"event": "done"}\n\n'
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
 @app.get("/sessions")
 async def sessions(limit: int = 30) -> list[SessionSummary]:
     """Most recent conversations, with titles."""
