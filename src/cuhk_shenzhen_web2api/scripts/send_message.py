@@ -66,6 +66,18 @@ def main() -> None:
         dest="no_tools",
         help="Set params.tool_proxy=false",
     )
+    parser.add_argument(
+        "--tool-proxy",
+        action="store_true",
+        dest="tool_proxy",
+        help="Enable tool proxy (params.tool_proxy=true)",
+    )
+    parser.add_argument(
+        "--register-tool",
+        nargs=3,
+        metavar=("NAME", "DESCRIPTION", "ENDPOINT"),
+        help="Register a tool: name description endpoint",
+    )
     args = parser.parse_args()
 
     config = env.load_env()
@@ -90,7 +102,35 @@ def main() -> None:
         sys.exit(1)
 
     client = ChatClient(cb, quota_pool=args.quota_pool)
-    params = {"tool_proxy": False} if args.no_tools else None
+
+    # Build params dict
+    params: dict | None = None
+    if args.no_tools:
+        params = {"tool_proxy": False}
+    elif args.tool_proxy:
+        params = {"tool_proxy": True}
+
+    # Register tool if requested
+    if args.register_tool:
+        name, description, endpoint = args.register_tool
+        from cuhk_shenzhen_web2api.tool_proxy import register_tool
+
+        def make_tool_handler(endpoint_url: str):
+            def handler(arguments: dict) -> str:
+                import requests
+
+                response = requests.post(endpoint_url, json=arguments)
+                response.raise_for_status()
+                return response.text
+
+            return handler
+
+        register_tool(
+            name=name,
+            description=description,
+            func=make_tool_handler(endpoint),
+        )
+        print(f"Registered tool: {name}", flush=True)
 
     last_reply: dict = {}
     last_file = CHAT_DATA_DIR / "last_reply.json"

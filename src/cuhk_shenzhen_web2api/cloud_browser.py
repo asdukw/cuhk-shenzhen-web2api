@@ -21,6 +21,7 @@ from firecrawl import Firecrawl
 from .paths import COOKIES_FILE, SESSION_ID_FILE
 
 RATE_SLEEP_SECONDS = 3.5  # free tier is ~3 browser-execute req/min
+FIRECRAWL_MAX_TTL_SECONDS = 3600
 
 
 class CloudBrowser:
@@ -113,6 +114,9 @@ class CloudBrowser:
 def create_session(
     app: Firecrawl, ttl: int = 1800, activity_ttl: int = 900
 ) -> CloudBrowser:
+    # Firecrawl rejects browser sessions whose TTL exceeds one hour.
+    ttl = max(1, min(ttl, FIRECRAWL_MAX_TTL_SECONDS))
+    activity_ttl = max(1, min(activity_ttl, ttl))
     session = app.browser(ttl=ttl, activity_ttl=activity_ttl)
     sid = session.id
     if sid is None:
@@ -127,8 +131,8 @@ def resume_session(app: Firecrawl, sid: str) -> CloudBrowser:
 def get_or_create_session(
     app: Firecrawl,
     sid: str | None = None,
-    ttl: int = 1800,
-    activity_ttl: int = 900,
+    ttl: int = 14400,
+    activity_ttl: int = 3600,
 ) -> CloudBrowser:
     """Resume `sid` if it is still alive, otherwise create a fresh session.
 

@@ -24,10 +24,17 @@ These scripts talk to the production site through Firecrawl's cloud browser and 
 - `scripts/server.py` — local FastAPI server (`uvicorn`, 127.0.0.1:8765). Endpoints:
   - `GET /health` — browser session id, URL, auth user.
   - `POST /chat` — send message (JSON body: `message`, `approach_id`, `quota_pool`, `chat_session_id`, `parent_idx`, `tool_proxy`). Slash commands handled: `/model`, `/model <name>`, `/help`.
+  - `POST /response` — unified response endpoint (JSON body: `message`, `stream`, ...). When `stream=false` (default), returns complete reply as JSON. When `stream=true`, returns SSE events.
   - `GET /sessions[?limit]` — recent conversations with titles.
   - `GET /sessions/{id}` — full conversation (messages array).
   - `GET /model` — current default model + available models.
   - `POST /model` — switch default model (`{"approach_id": "..."}`).
+  - `GET /tools` — list all registered tools.
+  - `POST /tools` — register a new tool.
+  - `DELETE /tools/{tool_name}` — unregister a tool.
+  - `POST /tools/call` — execute a tool call.
+  - `GET /tools/log` — get tool execution log.
+  - `DELETE /tools/log` — clear tool execution log.
 
 ## Firecrawl `browser_execute` sandbox quirks (JS emitted by `cloud_browser.py`)
 - Only the **last expression's value** is returned (`console.log` is dropped); scripts must end with the value, e.g. leaves `JSON.stringify(...)` as the final expression.
