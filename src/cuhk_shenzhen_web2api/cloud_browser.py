@@ -134,8 +134,8 @@ def create_session(
     rate_sleep: float = RATE_SLEEP_SECONDS,
     max_ttl: int = FIRECRAWL_MAX_TTL_SECONDS,
 ) -> CloudBrowser:
-    # Firecrawl Cloud rejects browser sessions whose TTL exceeds one hour;
-    # self-hosted deployments are allowed a longer ceiling.
+    # Firecrawl's v2 browser API rejects session TTLs above one hour on both
+    # cloud and self-hosted deployments.
     ttl = max(1, min(ttl, max_ttl))
     activity_ttl = max(1, min(activity_ttl, ttl))
     try:

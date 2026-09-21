@@ -18,8 +18,9 @@ one place, so no call site has to know which one is active:
     runs with ``USE_DB_AUTHENTICATION=false`` and ignores the header.
 ``FIRECRAWL_RATE_SLEEP`` / ``FIRECRAWL_MAX_TTL`` / ``FIRECRAWL_TIMEOUT``
     Optional tuning. Defaults are mode-specific: the cloud free tier allows only
-    ~3 browser-execute requests per minute, whereas a self-hosted stack has no
-    such quota and can hold a session longer.
+    ~3 browser-execute requests per minute, whereas a self-hosted stack can use
+    a shorter delay. The v2 browser API caps session TTL at 3600 seconds on both
+    backends.
 
 One caveat decides whether local mode is usable end to end: Firecrawl's
 browser-session API (``/v2/browser``, which every step of the SSO login goes
@@ -58,7 +59,7 @@ DEFAULT_LOCAL_API_URL = "http://127.0.0.1:3002"
 DEFAULT_CLOUD_RATE_SLEEP = RATE_SLEEP_SECONDS
 DEFAULT_LOCAL_RATE_SLEEP = 0.5
 DEFAULT_CLOUD_MAX_TTL = FIRECRAWL_MAX_TTL_SECONDS
-DEFAULT_LOCAL_MAX_TTL = 14400
+DEFAULT_LOCAL_MAX_TTL = FIRECRAWL_MAX_TTL_SECONDS
 
 # Upstream marker for "this deployment has no browser service".
 BROWSER_SERVICE_MISSING_MARKER = "BROWSER_SERVICE_URL is missing"
@@ -78,11 +79,10 @@ _MODE_ALIASES = {
 
 _BROWSER_SERVICE_HINT = (
     "the configured Firecrawl backend has no browser service, so browser "
-    "sessions (/v2/browser) are unavailable. A stock self-hosted Firecrawl "
-    "docker stack ships without one: the API only serves this route when "
-    "BROWSER_SERVICE_URL is set. Fix it by either setting FIRECRAWL_MODE=cloud, "
-    "or pointing BROWSER_SERVICE_URL at a reachable browser service inside the "
-    "self-hosted stack."
+    "sessions (/v2/browser) are unavailable. The repository-managed local "
+    "Firecrawl stack currently supports scrape calls only; its separate local "
+    "browser backend has not been implemented yet. Use FIRECRAWL_MODE=cloud "
+    "for login and chat workflows for now."
 )
 
 
@@ -184,6 +184,7 @@ def resolve_settings(
     max_ttl = _optional_int(values, "FIRECRAWL_MAX_TTL")
     if max_ttl is None:
         max_ttl = DEFAULT_LOCAL_MAX_TTL if mode == MODE_LOCAL else DEFAULT_CLOUD_MAX_TTL
+    max_ttl = min(max_ttl, FIRECRAWL_MAX_TTL_SECONDS)
 
     return FirecrawlSettings(
         mode=mode,

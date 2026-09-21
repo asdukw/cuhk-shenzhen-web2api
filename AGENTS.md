@@ -4,7 +4,7 @@
 
 This repository is a Python 3.12 client and local HTTP bridge for CUHK-Shenzhen's AI chat at `https://ai.cuhk.edu.cn/chat/`. A Firecrawl browser session completes the ADFS/aTrust SSO flow and keeps the authenticated, IP-bound browser session alive. `ChatClient` then calls the reverse-engineered chat API from the browser page context so the service receives the right cookies and CSRF token.
 
-The Firecrawl backend is selectable: Firecrawl Cloud (default) or a locally deployed Firecrawl instance. See "Firecrawl backends" below.
+The scrape backend is selectable: Firecrawl Cloud (default) or the repository-managed local Firecrawl stack. Browser sessions still require Firecrawl Cloud; a separate local browser backend is planned but not implemented. See "Firecrawl backends" below.
 
 The project uses a `src` layout, `uv` for dependency management, `uv_build` as the build backend, FastAPI for the local server, and Ruff/Pyright for static checks. `README.md` is currently empty, so this file is the primary contributor guide.
 
@@ -21,6 +21,7 @@ The installed console entry point, `cuhk-shenzhen-web2api`, currently calls the 
 - `src/cuhk_shenzhen_web2api/server.py`: FastAPI application and compatibility endpoints.
 - `src/cuhk_shenzhen_web2api/tool_proxy.py`: tool registration, execution, and logging.
 - `src/cuhk_shenzhen_web2api/scripts/`: thin command-line runners for login, chat, probing, scraping, and serving.
+- `deploy/firecrawl/`: repository-managed, loopback-only Firecrawl scrape stack adapted from the pinned open-source upstream implementation.
 - `scripts/`: local manual test and server helper scripts; this is not where shared application logic belongs.
 - `docs/tool_proxy.md`: tool-proxy API and extension details.
 - `data/`: gitignored live-session state, cookies, replies, scans, and downloaded bundles.
@@ -56,7 +57,7 @@ Bare `python` and `py` may resolve to the active environment, but do not rely on
 
 ## Firecrawl backends
 
-`firecrawl_provider.resolve_settings()` is the single source of truth. It reads `.env` (via `env.load_env()`) and returns a validated `FirecrawlSettings`; `build_client()` turns that into the SDK client and `open_browser_session()` additionally resumes or creates a browser session. Every runner goes through these helpers, so switching backends never requires a code change.
+`firecrawl_provider.resolve_settings()` is the single source of truth. It reads `.env` (via `env.load_env()`) and returns a validated `FirecrawlSettings`; `build_client()` turns that into the SDK client and `open_browser_session()` additionally resumes or creates a browser session. The local backend currently supports scrape calls only. Browser-session runners fail explicitly until the separate local browser backend is implemented.
 
 | Variable | Meaning |
 | --- | --- |
@@ -64,19 +65,35 @@ Bare `python` and `py` may resolve to the active environment, but do not rely on
 | `FIRECRAWL_API_URL` | Base URL override. Defaults to `https://api.firecrawl.dev` (cloud) or `http://127.0.0.1:3002` (local, the docker-compose publish). |
 | `FIRECRAWL_API_KEY` | Required in cloud mode, optional in local mode. It is always passed to the SDK explicitly — including as `""` — so the SDK cannot silently pick up a stray process-environment key and send it to a local instance. |
 | `FIRECRAWL_RATE_SLEEP` | Seconds slept before each browser call. Default 3.5 (cloud free tier is ~3 req/min) or 0.5 (local). |
-| `FIRECRAWL_MAX_TTL` | Browser-session TTL ceiling. Default 3600 (cloud rejects more) or 14400 (local). |
+| `FIRECRAWL_MAX_TTL` | Browser-session TTL ceiling. Defaults to 3600 and is capped there because the v2 API rejects larger values on both backends. |
 | `FIRECRAWL_TIMEOUT` | HTTP timeout in seconds. Unset means the SDK default. |
 
-Both backends speak the same v2 protocol, so `CloudBrowser` and `ChatClient` are unaware of the choice.
+Cloud and local scrape backends speak the same Firecrawl v2 protocol. `CloudBrowser` and `ChatClient` still depend on the cloud browser-session API.
+
+### Repository-managed local scrape stack
+
+`deploy/firecrawl/compose.yaml` runs Firecrawl API, its scrape-only Playwright service, Redis, RabbitMQ, and NuQ PostgreSQL. The API and Playwright images are pinned by digest; the helper builds the NuQ image from pinned upstream source when it is missing. Only `127.0.0.1:3002` is published.
+
+Use the PowerShell helper rather than invoking an ad-hoc Compose checkout:
+
+```powershell
+.\scripts\local_firecrawl.ps1 up
+.\scripts\local_firecrawl.ps1 verify
+.\scripts\local_firecrawl.ps1 status
+.\scripts\local_firecrawl.ps1 logs
+.\scripts\local_firecrawl.ps1 down
+```
+
+`verify` calls the real local `/v2/scrape` endpoint against `https://example.com`; it does not contact CUHK. Configure the Python client with `FIRECRAWL_MODE=local`, `FIRECRAWL_API_URL=http://127.0.0.1:3002`, and an empty `FIRECRAWL_API_KEY`.
 
 ### The self-hosted browser-service caveat
 
-**A stock self-hosted Firecrawl cannot serve the browser-session API.** `apps/api/src/controllers/v2/browser.ts` in the upstream repo answers HTTP 503 `Browser feature is not configured (BROWSER_SERVICE_URL is missing).` whenever `BROWSER_SERVICE_URL` is unset, and the upstream `docker-compose.yaml` publishes only the API and a scrape-only `playwright-service` — there is no browser service. The upstream self-hosting guide states this directly: for Agent/Browser/interact capabilities, use Firecrawl Cloud.
+**The local stack intentionally does not serve the browser-session API.** Firecrawl's open-source API answers HTTP 503 `Browser feature is not configured (BROWSER_SERVICE_URL is missing).` whenever `BROWSER_SERVICE_URL` is unset, and its open-source `playwright-service` implements scrape requests rather than persistent sessions. This project will provide its own local browser backend in a later phase instead of cloning Firecrawl's private browser service.
 
 Consequences for local mode:
 
 - `scrape_chat.py` works, because `/v2/scrape` is part of the stock stack.
-- `login.py`, `send_message.py`, `probe.py`, and `server.py` all fail at session creation. `cloud_browser.create_session()` converts that 503 into `BrowserServiceUnavailable`, and `firecrawl_provider.open_browser_session()` re-raises it as `ConfigurationError` with instructions: switch to `FIRECRAWL_MODE=cloud`, or set `BROWSER_SERVICE_URL` on the self-hosted instance.
+- `login.py`, `send_message.py`, `probe.py`, and `server.py` all fail at session creation in local mode. `cloud_browser.create_session()` converts the 503 into `BrowserServiceUnavailable`, and `firecrawl_provider.open_browser_session()` re-raises it as an actionable `ConfigurationError`.
 - The aTrust session is bound to the browser's egress IP, so the browser backend and the cookie file must stay paired. Switching backends invalidates `data/chat_session/session_id.txt`; delete it (or pass `--resume` with a session from the same backend) so the next run logs in again.
 
 Do not paper over this by falling back to the cloud automatically — a silent fallback would hide a misconfiguration and burn cloud quota.

@@ -49,7 +49,7 @@ check("local mode", local.mode, "local")
 check("local url", local.api_url, "http://127.0.0.1:3002")
 check("local key may be empty", local.api_key, "")
 check("local rate_sleep", local.rate_sleep, 0.5)
-check("local max_ttl", local.max_ttl, 14400)
+check("local max_ttl", local.max_ttl, 3600)
 
 check("alias docker", fp.resolve_settings({"FIRECRAWL_MODE": "Docker"}).mode, "local")
 check(
@@ -87,6 +87,13 @@ check(
         rate_sleep=1.25,
         max_ttl=600,
     ),
+)
+check(
+    "max_ttl is capped by the browser API",
+    fp.resolve_settings(
+        {"FIRECRAWL_MODE": "local", "FIRECRAWL_MAX_TTL": "14400"}
+    ).max_ttl,
+    3600,
 )
 check(
     "describe() never leaks the key",

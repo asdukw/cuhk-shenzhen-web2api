@@ -1,0 +1,114 @@
+# Local scrape API adapted from Firecrawl's open-source self-hosted stack.
+# Upstream reference: https://github.com/firecrawl/firecrawl/tree/95c8ab18f524d1aa813cca2a6dc8bd39191504ec
+# Browser sessions are intentionally out of scope: no BROWSER_SERVICE_URL is set.
+
+name: cuhk-local-firecrawl
+
+x-api-environment: &api-environment
+  REDIS_URL: redis://redis:6379
+  REDIS_RATE_LIMIT_URL: redis://redis:6379
+  PLAYWRIGHT_MICROSERVICE_URL: http://playwright-service:3000/scrape
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  POSTGRES_DB: ${POSTGRES_DB:-postgres}
+  POSTGRES_HOST: nuq-postgres
+  POSTGRES_PORT: 5432
+  USE_DB_AUTHENTICATION: "false"
+  NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-4}
+  CRAWL_CONCURRENT_REQUESTS: ${CRAWL_CONCURRENT_REQUESTS:-5}
+  MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-3}
+  BROWSER_POOL_SIZE: ${BROWSER_POOL_SIZE:-2}
+  NUQ_BACKEND: pg
+  NUQ_RABBITMQ_URL: amqp://rabbitmq:5672
+  ENV: local
+
+services:
+  api:
+    image: ghcr.io/firecrawl/firecrawl@sha256:ea2d420cea57c06e1343d82016e449db1a3e2ee6744213c395c797f09392dd3b
+    environment:
+      <<: *api-environment
+      HOST: 0.0.0.0
+      PORT: 3002
+      EXTRACT_WORKER_PORT: 3004
+      WORKER_PORT: 3005
+      HARNESS_STARTUP_TIMEOUT_MS: 60000
+    depends_on:
+      playwright-service:
+        condition: service_started
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      nuq-postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${FIRECRAWL_PORT:-3002}:3002"
+    command: node dist/src/harness.js --start-docker
+    restart: unless-stopped
+    networks:
+      - backend
+
+  playwright-service:
+    image: ghcr.io/firecrawl/playwright-service@sha256:df1a393ce8bfc3801570a826a9b0dcc400ae48789adb4a0ad9d6cbf0229b059b
+    command: node dist/api.js
+    environment:
+      PORT: 3000
+      MAX_CONCURRENT_PAGES: ${CRAWL_CONCURRENT_REQUESTS:-5}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp/.cache:noexec,nosuid,size=1g
+    networks:
+      - backend
+
+  redis:
+    image: redis:alpine
+    command: redis-server --bind 0.0.0.0
+    restart: unless-stopped
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  nuq-postgres:
+    image: firecrawl-nuq-postgres:latest
+    pull_policy: never
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    restart: unless-stopped
+    volumes:
+      - nuq-postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  nuq-postgres-data:
