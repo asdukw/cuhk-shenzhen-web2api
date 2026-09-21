@@ -31,6 +31,16 @@ UPLOAD_MEDIA_ENDPOINT = "/uploadMedia/"
 _DEFAULT_PARAMS = {"tool_proxy": False}
 
 
+def _clip(text: Any, limit: int = 200) -> str:
+    """Bound raw upstream text so it cannot flood a log or echo a transcript.
+
+    Campus bodies go into ChatAPIError messages (which bubble up to INFO logs
+    and HTTP error responses); keep them short and single-line.
+    """
+    flat = " ".join(str(text).split()) if text is not None else ""
+    return flat if len(flat) <= limit else flat[:limit] + "\u2026[clipped]"
+
+
 class ChatAPIError(RuntimeError):
     def __init__(
         self,
@@ -205,9 +215,9 @@ class ChatClient:
             try:
                 err = json.loads(body)["error"]
             except (json.JSONDecodeError, KeyError, TypeError):
-                err = {"message": body}
+                err = {"message": _clip(body)}
             raise ChatAPIError(
-                err.get("message") or f"HTTP {res.get('status')}",
+                _clip(err.get("message")) or f"HTTP {res.get('status')}",
                 code=err.get("error_code"),
                 detail=err.get("detail"),
                 status=res.get("status"),
@@ -320,14 +330,14 @@ class ChatClient:
             raise ChatAPIError("upload failed: browser_execute error")
         if res.get("status", 0) != 200:
             raise ChatAPIError(
-                f"upload HTTP {res.get('status')}: {res.get('txt')}",
+                f"upload HTTP {res.get('status')}: {_clip(res.get('txt'))}",
                 status=res.get("status"),
             )
         body = res.get("txt", "")
         try:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
-            raise ChatAPIError(f"upload bad response: {body[:200]}") from exc
+            raise ChatAPIError(f"upload bad response: {_clip(body)}") from exc
         media_id = data.get("media_id")
         if not media_id:
             raise ChatAPIError("upload response has no media_id", detail=data)
@@ -377,7 +387,8 @@ class ChatClient:
         """Decode an application/json body from _post_json; raise on error."""
         if res.get("status", 0) != 200:
             raise ChatAPIError(
-                f"HTTP {res.get('status')}: {res.get('txt')}", status=res.get("status")
+                f"HTTP {res.get('status')}: {_clip(res.get('txt'))}",
+                status=res.get("status"),
             )
         try:
             return json.loads(res.get("txt", "") or "null")

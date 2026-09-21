@@ -27,6 +27,11 @@ def main() -> None:
     parser.add_argument(
         "--no-save", action="store_true", help="Do not persist session id/cookies"
     )
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Skip filling USERNAME/PASSWORD; wait for SSO in the live view",
+    )
     args = parser.parse_args()
 
     config = env.load_env()
@@ -36,19 +41,23 @@ def main() -> None:
         sys.exit(1)
     username = env.chat_username(config)
     password = env.chat_password(config)
+    manual = args.manual or not (username and password)
 
     app = Firecrawl(api_key=api_key)
     sid = args.resume or cloud_browser.load_session_id()
     cb = cloud_browser.get_or_create_session(app, sid)
     print("session ", cb.sid, flush=True)
+    if cb.live_url():
+        print("live    ", cb.live_url(), flush=True)
 
-    final_url = login.ensure_on_chat(cb, username, password, url=args.url)
+    final_url = login.ensure_on_chat(
+        cb, username, password, url=args.url, manual=manual
+    )
     print("final   ", final_url, flush=True)
-    if (
-        final_url.startswith(("ERROR", "EXEC_ERR", "RATE_LIMIT"))
-        or "/chat" not in final_url
-    ):
-        print("login did not land on /chat/", file=sys.stderr)
+    if final_url.startswith(
+        ("ERROR", "EXEC_ERR", "RATE_LIMIT")
+    ) or not login.looks_on_chat(final_url):
+        print("login did not land on authenticated /chat/", file=sys.stderr)
         raise SystemExit(1)
 
     if args.no_save:

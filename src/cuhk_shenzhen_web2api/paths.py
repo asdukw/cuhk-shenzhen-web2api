@@ -13,5 +13,7 @@ BUNDLES_DIR = CHAT_DATA_DIR / "bundles"
 
 SESSION_ID_FILE = CHAT_DATA_DIR / "session_id.txt"
 COOKIES_FILE = CHAT_DATA_DIR / "cookies.json"
+CONVERSATIONS_FILE = CHAT_DATA_DIR / "conversations.json"
+JOBS_DIR = CHAT_DATA_DIR / "jobs"
 
 CHAT_URL = "https://ai.cuhk.edu.cn/chat/"
