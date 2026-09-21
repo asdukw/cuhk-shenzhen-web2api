@@ -2,53 +2,38 @@
 
 Reverse-engineering step 1: pull the page HTML/markdown/links and inspect
 whatever renders (the ChatUI app or the aTrust/SDP verification gateway).
+
+Unlike the browser-session runners, this one only needs the scrape API, so it
+works against a stock self-hosted Firecrawl too. The backend comes from
+`FIRECRAWL_MODE` in .env; see `firecrawl_provider`.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from firecrawl import FirecrawlApp
+from firecrawl import Firecrawl
 from firecrawl.v2.types import ScreenshotFormat
 
-BASE_URL = "https://api.firecrawl.dev"
+from cuhk_shenzhen_web2api import env as pkg_env
+from cuhk_shenzhen_web2api import firecrawl_provider
+
 TARGET = "https://ai.cuhk.edu.cn/chat/"
 
 OUTPUT_DIR = Path(__file__).resolve().parents[3] / "data" / "chat"
 
 
-def load_env() -> dict[str, str]:
-    env_path = Path(__file__).resolve().parents[3] / ".env"
-    env: dict[str, str] = {}
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _, v = line.partition("=")
-                env[k.strip()] = v.strip().strip('"').strip("'")
-    for key in ("FIRECRAWL_API_KEY", "CHAT_USERNAME", "CHAT_PASSWORD", "CHAT_COOKIE"):
-        if key not in env and os.environ.get(key):
-            env[key] = os.environ[key]
-    return env
-
-
-def load_env_key() -> str:
-    return load_env().get("FIRECRAWL_API_KEY", "")
-
-
 def run_scrape(
-    api_key: str,
+    client: Firecrawl,
     url: str,
     headers: dict[str, str] | None = None,
     wait_for: int = 5000,
 ) -> dict:
-    app = FirecrawlApp(api_key=api_key, api_url=BASE_URL)
-    result = app.scrape(
+    result = client.scrape(
         url,
         formats=[
             "markdown",
@@ -87,12 +72,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    api_key = load_env_key()
-    if not api_key:
-        print("FIRECRAWL_API_KEY not found in .env or environment.", file=sys.stderr)
+    config = pkg_env.load_env()
+    try:
+        client, settings = firecrawl_provider.client_and_settings(config)
+    except firecrawl_provider.ConfigurationError as exc:
+        print(f"firecrawl backend unusable: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    cookie = args.cookie or load_env().get("CHAT_COOKIE")
+    cookie = args.cookie or config.get("CHAT_COOKIE")
     if not cookie:
         print(
             "No auth: pass --cookie or set CHAT_COOKIE / CHAT_USERNAME+CHAT_PASSWORD in .env.",
@@ -100,9 +87,10 @@ def main() -> None:
         )
         sys.exit(1)
 
+    print(f"Backend {settings.mode} ({settings.api_url})")
     print(f"Scraping {args.url} ...")
     headers = {"Cookie": cookie}
-    doc = run_scrape(api_key, args.url, headers=headers, wait_for=args.wait_for)
+    doc = run_scrape(client, args.url, headers=headers, wait_for=args.wait_for)
 
     if args.raw:
         print(json.dumps(doc, ensure_ascii=False, indent=2))

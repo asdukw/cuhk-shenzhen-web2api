@@ -9,6 +9,9 @@ Merges the old probe_chat + probe_chat2 recon into one runnable script:
 Outputs land in data/chat_session/ (api_surface.json, chat_assets.json,
 config.json, big_bundle_scan.json, bundles/*.js).
 
+The browser backend (Firecrawl Cloud or a locally deployed instance) comes from
+`FIRECRAWL_MODE` in .env; see `firecrawl_provider`.
+
 Usage:
     python src/cuhk_shenzhen_web2api/scripts/probe.py [--resume SID] [--force]
 """
@@ -22,9 +25,7 @@ import re
 import sys
 from pathlib import Path
 
-from firecrawl import Firecrawl
-
-from cuhk_shenzhen_web2api import cloud_browser, env, login
+from cuhk_shenzhen_web2api import cloud_browser, env, firecrawl_provider, login
 from cuhk_shenzhen_web2api.chat_client import ChatClient
 from cuhk_shenzhen_web2api.paths import (
     BUNDLES_DIR,
@@ -259,14 +260,15 @@ def main() -> None:
     args = parser.parse_args()
 
     config = env.load_env()
-    api_key = env.firecrawl_api_key(config)
-    if not api_key:
-        print("FIRECRAWL_API_KEY missing in .env", file=sys.stderr)
+    try:
+        settings = firecrawl_provider.resolve_settings(config)
+        print(f"backend   {settings.mode} ({settings.api_url})", flush=True)
+        _app, cb = firecrawl_provider.open_browser_session(
+            settings, args.resume or cloud_browser.load_session_id(SESSION_ID_FILE)
+        )
+    except firecrawl_provider.ConfigurationError as exc:
+        print(f"firecrawl backend unusable: {exc}", file=sys.stderr)
         sys.exit(1)
-
-    app = Firecrawl(api_key=api_key)
-    sid = args.resume or cloud_browser.load_session_id(SESSION_ID_FILE)
-    cb = cloud_browser.get_or_create_session(app, sid)
     print("session   ", cb.sid, flush=True)
 
     final = login.ensure_on_chat(

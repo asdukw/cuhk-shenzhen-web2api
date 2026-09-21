@@ -1,4 +1,8 @@
-"""Thin wrapper around Firecrawl's cloud browser / browser_execute.
+"""Thin wrapper around Firecrawl's browser session / browser_execute API.
+
+Backend-agnostic: the same code drives Firecrawl Cloud or a self-hosted
+instance, because both expose ``/v2/browser``. Which one is used is decided in
+``firecrawl_provider``; this module only receives an already-configured client.
 
 The sandbox runs Node with a persistent `page` handle for the lifetime of the
 session. Two constraints discovered empirically:
@@ -20,8 +24,19 @@ from firecrawl import Firecrawl
 
 from .paths import COOKIES_FILE, SESSION_ID_FILE
 
-RATE_SLEEP_SECONDS = 3.5  # free tier is ~3 browser-execute req/min
+RATE_SLEEP_SECONDS = 3.5  # cloud free tier is ~3 browser-execute req/min
 FIRECRAWL_MAX_TTL_SECONDS = 3600
+
+# Upstream message returned (HTTP 503) when a deployment has no browser service.
+BROWSER_SERVICE_MISSING_MARKER = "BROWSER_SERVICE_URL is missing"
+
+
+class BrowserServiceUnavailable(RuntimeError):
+    """The Firecrawl backend has no browser service configured.
+
+    Raised instead of a bare SDK error so callers can explain that the stock
+    self-hosted stack does not serve ``/v2/browser``.
+    """
 
 
 class CloudBrowser:
@@ -112,20 +127,35 @@ class CloudBrowser:
 
 
 def create_session(
-    app: Firecrawl, ttl: int = 1800, activity_ttl: int = 900
+    app: Firecrawl,
+    ttl: int = 1800,
+    activity_ttl: int = 900,
+    *,
+    rate_sleep: float = RATE_SLEEP_SECONDS,
+    max_ttl: int = FIRECRAWL_MAX_TTL_SECONDS,
 ) -> CloudBrowser:
-    # Firecrawl rejects browser sessions whose TTL exceeds one hour.
-    ttl = max(1, min(ttl, FIRECRAWL_MAX_TTL_SECONDS))
+    # Firecrawl Cloud rejects browser sessions whose TTL exceeds one hour;
+    # self-hosted deployments are allowed a longer ceiling.
+    ttl = max(1, min(ttl, max_ttl))
     activity_ttl = max(1, min(activity_ttl, ttl))
-    session = app.browser(ttl=ttl, activity_ttl=activity_ttl)
+    try:
+        session = app.browser(ttl=ttl, activity_ttl=activity_ttl)
+    except Exception as exc:
+        # Classify the upstream rejection so callers can explain it; anything
+        # else is re-raised unchanged.
+        if BROWSER_SERVICE_MISSING_MARKER in str(exc):
+            raise BrowserServiceUnavailable(str(exc)) from exc
+        raise
     sid = session.id
     if sid is None:
         raise RuntimeError("browser session created without an id")
-    return CloudBrowser(app, sid)
+    return CloudBrowser(app, sid, rate_sleep=rate_sleep)
 
 
-def resume_session(app: Firecrawl, sid: str) -> CloudBrowser:
-    return CloudBrowser(app, sid)
+def resume_session(
+    app: Firecrawl, sid: str, *, rate_sleep: float = RATE_SLEEP_SECONDS
+) -> CloudBrowser:
+    return CloudBrowser(app, sid, rate_sleep=rate_sleep)
 
 
 def get_or_create_session(
@@ -133,18 +163,26 @@ def get_or_create_session(
     sid: str | None = None,
     ttl: int = 14400,
     activity_ttl: int = 3600,
+    *,
+    rate_sleep: float = RATE_SLEEP_SECONDS,
+    max_ttl: int = FIRECRAWL_MAX_TTL_SECONDS,
 ) -> CloudBrowser:
     """Resume `sid` if it is still alive, otherwise create a fresh session.
 
     One liveness probe call is consumed in the resumed case.
+
+    Raises:
+        BrowserServiceUnavailable: the backend has no browser service at all.
     """
     if sid:
-        cb = resume_session(app, sid)
+        cb = resume_session(app, sid, rate_sleep=rate_sleep)
         if cb.is_alive():
             return cb
         print(f"session {sid} is expired/destroyed — creating a new one", flush=True)
         cb.close()
-    return create_session(app, ttl=ttl, activity_ttl=activity_ttl)
+    return create_session(
+        app, ttl=ttl, activity_ttl=activity_ttl, rate_sleep=rate_sleep, max_ttl=max_ttl
+    )
 
 
 def load_session_id(path: Path = SESSION_ID_FILE) -> str | None:

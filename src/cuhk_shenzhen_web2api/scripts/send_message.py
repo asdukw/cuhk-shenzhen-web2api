@@ -1,8 +1,11 @@
 """Task: send one chat message and print the assistant reply.
 
-Uses a logged-in cloud browser session (resumes data/chat_session/session_id.txt
+Uses a logged-in browser session (resumes data/chat_session/session_id.txt
 or --resume). Writes the raw NDJSON stream and a parsed summary to
 data/chat_session/last_stream.ndjson / last_reply.json.
+
+The browser backend (Firecrawl Cloud or a locally deployed instance) comes from
+`FIRECRAWL_MODE` in .env; see `firecrawl_provider`.
 
 Usage:
     python src/cuhk_shenzhen_web2api/scripts/send_message.py "你好" \
@@ -16,9 +19,7 @@ import argparse
 import json
 import sys
 
-from firecrawl import Firecrawl
-
-from cuhk_shenzhen_web2api import cloud_browser, env, login
+from cuhk_shenzhen_web2api import cloud_browser, env, firecrawl_provider, login
 from cuhk_shenzhen_web2api.chat_client import ChatClient
 from cuhk_shenzhen_web2api.paths import CHAT_DATA_DIR, SESSION_ID_FILE
 
@@ -81,17 +82,18 @@ def main() -> None:
     args = parser.parse_args()
 
     config = env.load_env()
-    api_key = env.firecrawl_api_key(config)
-    if not api_key:
-        print("FIRECRAWL_API_KEY missing in .env", file=sys.stderr)
-        sys.exit(1)
-
-    app = Firecrawl(api_key=api_key)
     sid = args.resume or cloud_browser.load_session_id(SESSION_ID_FILE)
     if not sid:
         print("no browser session — run scripts/login.py first", file=sys.stderr)
         sys.exit(1)
-    cb = cloud_browser.get_or_create_session(app, sid)
+
+    try:
+        settings = firecrawl_provider.resolve_settings(config)
+        print(f"backend   {settings.mode} ({settings.api_url})", flush=True)
+        _app, cb = firecrawl_provider.open_browser_session(settings, sid)
+    except firecrawl_provider.ConfigurationError as exc:
+        print(f"firecrawl backend unusable: {exc}", file=sys.stderr)
+        sys.exit(1)
     print("session   ", cb.sid, flush=True)
 
     final = login.ensure_on_chat(

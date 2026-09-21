@@ -1,7 +1,10 @@
-"""Task: bring a cloud browser session onto the AI chat app and persist it.
+"""Task: bring a browser session onto the AI chat app and persist it.
 
 Creates a new Firecrawl browser session (or resumes one with --resume), runs
 the SSO login flow if needed, and saves session-id + cookies under data/.
+
+The browser backend (Firecrawl Cloud or a locally deployed instance) comes from
+`FIRECRAWL_MODE` in .env; see `firecrawl_provider`.
 
 Usage:
     python src/cuhk_shenzhen_web2api/scripts/login.py [--resume SID] [--no-save]
@@ -12,9 +15,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from firecrawl import Firecrawl
-
-from cuhk_shenzhen_web2api import cloud_browser, env, login
+from cuhk_shenzhen_web2api import cloud_browser, env, firecrawl_provider, login
 from cuhk_shenzhen_web2api.paths import CHAT_URL, COOKIES_FILE, SESSION_ID_FILE
 
 
@@ -30,16 +31,18 @@ def main() -> None:
     args = parser.parse_args()
 
     config = env.load_env()
-    api_key = env.firecrawl_api_key(config)
-    if not api_key:
-        print("FIRECRAWL_API_KEY missing in .env", file=sys.stderr)
-        sys.exit(1)
     username = env.chat_username(config)
     password = env.chat_password(config)
 
-    app = Firecrawl(api_key=api_key)
-    sid = args.resume or cloud_browser.load_session_id()
-    cb = cloud_browser.get_or_create_session(app, sid)
+    try:
+        settings = firecrawl_provider.resolve_settings(config)
+        print(f"backend   {settings.mode} ({settings.api_url})", flush=True)
+        _app, cb = firecrawl_provider.open_browser_session(
+            settings, args.resume or cloud_browser.load_session_id()
+        )
+    except firecrawl_provider.ConfigurationError as exc:
+        print(f"firecrawl backend unusable: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     print("session ", cb.sid, flush=True)
 
     final_url = login.ensure_on_chat(cb, username, password, url=args.url)
