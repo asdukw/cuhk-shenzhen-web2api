@@ -2,9 +2,9 @@
 
 Chain: ai.cuhk.edu.cn/chat -> aTrust SDP -> ADFS SSO -> AI platform OAuth -> /chat/
 
-All page automation runs inside a Firecrawl cloud browser session; the aTrust
-session is tied to the cloud run's IP, so cookies are only usable from that
-same browser session.
+All page automation runs inside the configured browser backend. The aTrust
+session is tied to that browser's egress IP, so cookies are only usable from
+the same browser session.
 """
 
 from __future__ import annotations
@@ -12,12 +12,12 @@ from __future__ import annotations
 import json
 import time
 
-from .cloud_browser import CloudBrowser
+from .browser_backend import BrowserBackend
 from .paths import CHAT_URL
 
 
 def login_flow(
-    cb: CloudBrowser,
+    cb: BrowserBackend,
     username: str,
     password: str,
     url: str = CHAT_URL,
@@ -87,7 +87,7 @@ def login_flow(
 
 
 def ensure_on_chat(
-    cb: CloudBrowser, username: str, password: str, url: str = CHAT_URL
+    cb: BrowserBackend, username: str, password: str, url: str = CHAT_URL
 ) -> str:
     """If the page is not on the chat app yet, run the login flow."""
     cur = cb.url()

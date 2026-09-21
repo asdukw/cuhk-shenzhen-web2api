@@ -1,0 +1,68 @@
+# Local browser backend based on Steel Browser v0.5.x.
+# Upstream: https://github.com/steel-dev/steel-browser
+
+name: cuhk-local-steel
+
+services:
+  steel:
+    image: ${STEEL_IMAGE:-ghcr.io/steel-dev/steel-browser-api@sha256:7a161b95e8a9b20ddc2f87d380c61636bb13507f7fe99fd4704cb105c5478f99}
+    hostname: cuhk-local-steel
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        rm -f /app/api/user-data-dir/SingletonLock
+        /app/api/user-data-dir/SingletonCookie
+        /app/api/user-data-dir/SingletonSocket;
+        exec /app/api/entrypoint.sh
+    environment:
+      DOMAIN: localhost:${STEEL_API_PORT:-3000}
+      CDP_DOMAIN: localhost:${STEEL_CDP_PORT:-9223}
+      CHROME_HEADLESS: "true"
+      LOG_LEVEL: info
+    ports:
+      - "127.0.0.1:${STEEL_API_PORT:-3000}:3000"
+      - "127.0.0.1:${STEEL_CDP_PORT:-9223}:9223"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3000/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    shm_size: 2gb
+    volumes:
+      - steel-profile:/app/api/user-data-dir
+      - steel-cache:/app/.cache
+    networks:
+      - backend
+
+  executor:
+    build:
+      context: ./executor
+    environment:
+      PORT: 3001
+      STEEL_API_URL: http://steel:3000
+      STEEL_CDP_HOST: steel
+      STEEL_EXECUTOR_TOKEN: ${STEEL_EXECUTOR_TOKEN:-steel-local-only}
+    depends_on:
+      steel:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${STEEL_EXECUTOR_PORT:-3003}:3001"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  steel-profile:
+  steel-cache:

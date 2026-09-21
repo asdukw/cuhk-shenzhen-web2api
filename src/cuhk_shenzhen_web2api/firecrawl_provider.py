@@ -22,12 +22,11 @@ one place, so no call site has to know which one is active:
     a shorter delay. The v2 browser API caps session TTL at 3600 seconds on both
     backends.
 
-One caveat decides whether local mode is usable end to end: Firecrawl's
-browser-session API (``/v2/browser``, which every step of the SSO login goes
-through) is *not* part of the stock self-hosted stack. The API answers HTTP 503
-``Browser feature is not configured (BROWSER_SERVICE_URL is missing).`` unless
-the instance has ``BROWSER_SERVICE_URL`` set. ``open_browser_session`` detects
-that response and fails with an actionable message instead of a raw stack trace.
+Firecrawl's browser-session API is not part of its stock self-hosted stack.
+Application workflows select Firecrawl Cloud or the repository-managed local
+Steel backend through ``browser_provider``. ``open_browser_session`` remains as
+the Firecrawl-specific adapter and reports the upstream HTTP 503 clearly when
+called against an unconfigured self-hosted Firecrawl instance.
 
 Local mode additionally extends ``NO_PROXY`` so loopback traffic is not handed
 to a system HTTP proxy; see ``ensure_local_bypasses_proxy``.
@@ -80,9 +79,9 @@ _MODE_ALIASES = {
 _BROWSER_SERVICE_HINT = (
     "the configured Firecrawl backend has no browser service, so browser "
     "sessions (/v2/browser) are unavailable. The repository-managed local "
-    "Firecrawl stack currently supports scrape calls only; its separate local "
-    "browser backend has not been implemented yet. Use FIRECRAWL_MODE=cloud "
-    "for login and chat workflows for now."
+    "Firecrawl stack supports scrape calls only. Set BROWSER_BACKEND=steel-local "
+    "and start scripts/local_steel.ps1 for local login and chat workflows, or "
+    "use the Firecrawl Cloud browser backend."
 )
 
 
@@ -116,7 +115,7 @@ class FirecrawlSettings:
         }
 
 
-def _normalise_mode(raw: str | None) -> str:
+def normalise_mode(raw: str | None) -> str:
     value = (raw or "").strip().lower()
     if not value:
         return MODE_CLOUD
@@ -162,7 +161,7 @@ def resolve_settings(
             selection without an API key.
     """
     values = env.load_env() if env_values is None else env_values
-    mode = _normalise_mode(values.get("FIRECRAWL_MODE"))
+    mode = normalise_mode(values.get("FIRECRAWL_MODE"))
 
     api_url = (values.get("FIRECRAWL_API_URL") or "").strip().rstrip("/")
     if not api_url:

@@ -1,11 +1,11 @@
 """Task: send one chat message and print the assistant reply.
 
-Uses a logged-in browser session (resumes data/chat_session/session_id.txt
-or --resume). Writes the raw NDJSON stream and a parsed summary to
-data/chat_session/last_stream.ndjson / last_reply.json.
+Uses a logged-in browser session (resumes the backend-specific session ID or
+``--resume``). Writes the raw NDJSON stream and a parsed summary to
+``data/chat_session/last_stream.ndjson`` / ``last_reply.json``.
 
-The browser backend (Firecrawl Cloud or a locally deployed instance) comes from
-`FIRECRAWL_MODE` in .env; see `firecrawl_provider`.
+The browser backend (Firecrawl Cloud or local Steel) comes from
+`BROWSER_BACKEND` in .env; see `browser_provider`.
 
 Usage:
     python src/cuhk_shenzhen_web2api/scripts/send_message.py "你好" \
@@ -19,9 +19,9 @@ import argparse
 import json
 import sys
 
-from cuhk_shenzhen_web2api import cloud_browser, env, firecrawl_provider, login
+from cuhk_shenzhen_web2api import browser_provider, env, login
 from cuhk_shenzhen_web2api.chat_client import ChatClient
-from cuhk_shenzhen_web2api.paths import CHAT_DATA_DIR, SESSION_ID_FILE
+from cuhk_shenzhen_web2api.paths import CHAT_DATA_DIR
 
 
 def main() -> None:
@@ -60,7 +60,7 @@ def main() -> None:
         metavar="PATH",
         help="Local file to upload and attach (repeatable)",
     )
-    parser.add_argument("--resume", default=None, help="Resume Firecrawl browser sid")
+    parser.add_argument("--resume", default=None, help="Resume browser session id")
     parser.add_argument(
         "--no-tools",
         action="store_true",
@@ -82,17 +82,21 @@ def main() -> None:
     args = parser.parse_args()
 
     config = env.load_env()
-    sid = args.resume or cloud_browser.load_session_id(SESSION_ID_FILE)
+    try:
+        settings = browser_provider.resolve_settings(config)
+    except browser_provider.ConfigurationError as exc:
+        print(f"browser backend unusable: {exc}", file=sys.stderr)
+        sys.exit(1)
+    sid = args.resume or browser_provider.load_session_id(settings)
     if not sid:
         print("no browser session — run scripts/login.py first", file=sys.stderr)
         sys.exit(1)
 
     try:
-        settings = firecrawl_provider.resolve_settings(config)
-        print(f"backend   {settings.mode} ({settings.api_url})", flush=True)
-        _app, cb = firecrawl_provider.open_browser_session(settings, sid)
-    except firecrawl_provider.ConfigurationError as exc:
-        print(f"firecrawl backend unusable: {exc}", file=sys.stderr)
+        print(f"backend   {settings.describe()}", flush=True)
+        cb = browser_provider.open_browser_session(settings, sid)
+    except browser_provider.ConfigurationError as exc:
+        print(f"browser backend unusable: {exc}", file=sys.stderr)
         sys.exit(1)
     print("session   ", cb.sid, flush=True)
 

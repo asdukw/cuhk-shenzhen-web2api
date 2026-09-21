@@ -1,12 +1,12 @@
 """Local HTTP facade (web2api) over the CUHK AI chat.
 
-A FastAPI app that owns one shared Firecrawl browser session and exposes
+A FastAPI app that owns one shared browser session and exposes
 the chat as a JSON API. Every request goes through the live page context
 (cookies + CSRF + IP-bound aTrust session), so the underlying service considers
 it a normal browser conversation.
 
-The browser backend is Firecrawl Cloud or a locally deployed Firecrawl
-instance, selected by `FIRECRAWL_MODE` (see `firecrawl_provider`).
+The browser backend is Firecrawl Cloud or local Steel, selected by
+`BROWSER_BACKEND` (see `browser_provider`).
 
 Concurrency: the shared browser + the cloud free tier's ~3 req/min limit mean
 calls must be serialized. A module-level async lock guards all ChatClient work.
@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 
 log = logging.getLogger("web2api")
 
-from . import cloud_browser, env, firecrawl_provider, login
+from . import browser_provider, env, firecrawl_provider, login
 from .chat_client import ChatClient, ChatReply
 from .tool_proxy import (
     ToolCall,
@@ -100,6 +100,7 @@ class Health(BaseModel):
     url: str
     user: Any = None
     firecrawl: dict[str, Any] | None = None
+    browser: dict[str, Any] | None = None
 
 
 class ToolRegistration(BaseModel):
@@ -157,21 +158,26 @@ def _ensure_runtime() -> ChatClient:
     if _shared["client"] is not None:
         return _shared["client"]
     config = env.load_env()
-    settings = firecrawl_provider.resolve_settings(config)
-    log.info("firecrawl backend: %s", settings.describe())
-    _app, cb = firecrawl_provider.open_browser_session(
-        settings, cloud_browser.load_session_id()
+    firecrawl_settings = firecrawl_provider.resolve_settings(config)
+    browser_settings = browser_provider.resolve_settings(config)
+    log.info("firecrawl backend: %s", firecrawl_settings.describe())
+    log.info("browser backend: %s", browser_settings.describe())
+    cb = browser_provider.open_browser_session(
+        browser_settings, browser_provider.load_session_id(browser_settings)
     )
     final = login.ensure_on_chat(
         cb, env.chat_username(config), env.chat_password(config)
     )
     if "/chat" not in (final or ""):
         raise RuntimeError(f"login did not reach /chat/: {final}")
-    cloud_browser.save_session_id(cb.sid)
+    browser_provider.save_session_id(browser_settings, cb.sid)
     client = ChatClient(cb)
     _shared["cb"] = cb
     _shared["client"] = client
-    _shared["settings"] = settings
+    _shared["settings"] = {
+        "firecrawl": firecrawl_settings,
+        "browser": browser_settings,
+    }
     return client
 
 
@@ -258,12 +264,17 @@ async def health() -> Health:
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
     cb = _shared["cb"]
-    settings = _shared["settings"]
+    settings = _shared["settings"] or {}
+    firecrawl_settings = settings.get("firecrawl")
+    browser_settings = settings.get("browser")
     return Health(
         session_id=cb.sid,
         url=cb.url(),
         user=client.whoami().get("body"),
-        firecrawl=settings.describe() if settings is not None else None,
+        firecrawl=firecrawl_settings.describe()
+        if firecrawl_settings is not None
+        else None,
+        browser=browser_settings.describe() if browser_settings is not None else None,
     )
 
 

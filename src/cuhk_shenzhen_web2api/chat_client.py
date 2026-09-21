@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from .cloud_browser import CloudBrowser
+from .browser_backend import BrowserBackend
 
 CHAT_ENDPOINT = "/chat/"
 ABORT_ENDPOINT = "/chat/abort/"
@@ -108,7 +108,7 @@ def parse_chat_stream(text: str) -> ChatReply:
 
 
 class ChatClient:
-    def __init__(self, cb: CloudBrowser, *, quota_pool: str = "Students Pool"):
+    def __init__(self, cb: BrowserBackend, *, quota_pool: str = "Students Pool"):
         self.cb = cb
         self.quota_pool = quota_pool
 

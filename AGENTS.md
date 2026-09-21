@@ -2,9 +2,9 @@
 
 ## Project overview
 
-This repository is a Python 3.12 client and local HTTP bridge for CUHK-Shenzhen's AI chat at `https://ai.cuhk.edu.cn/chat/`. A Firecrawl browser session completes the ADFS/aTrust SSO flow and keeps the authenticated, IP-bound browser session alive. `ChatClient` then calls the reverse-engineered chat API from the browser page context so the service receives the right cookies and CSRF token.
+This repository is a Python 3.12 client and local HTTP bridge for CUHK-Shenzhen's AI chat at `https://ai.cuhk.edu.cn/chat/`. A selectable browser backend completes the ADFS/aTrust SSO flow and keeps the authenticated, IP-bound browser session alive. `ChatClient` then calls the reverse-engineered chat API from the browser page context so the service receives the right cookies and CSRF token.
 
-The scrape backend is selectable: Firecrawl Cloud (default) or the repository-managed local Firecrawl stack. Browser sessions still require Firecrawl Cloud; a separate local browser backend is planned but not implemented. See "Firecrawl backends" below.
+The scrape backend is selectable: Firecrawl Cloud (default) or the repository-managed local Firecrawl stack. Browser sessions independently use Firecrawl Cloud or the repository-managed local Steel stack. See "Firecrawl backends" and "Browser backends" below.
 
 The project uses a `src` layout, `uv` for dependency management, `uv_build` as the build backend, FastAPI for the local server, and Ruff/Pyright for static checks. `README.md` is currently empty, so this file is the primary contributor guide.
 
@@ -13,7 +13,10 @@ The installed console entry point, `cuhk-shenzhen-web2api`, currently calls the 
 ## Repository map
 
 - `src/cuhk_shenzhen_web2api/chat_client.py`: chat protocol, NDJSON decoding, conversation history, abort/recover, and uploads.
-- `src/cuhk_shenzhen_web2api/cloud_browser.py`: rate-limited Firecrawl browser-session wrapper and session persistence. Backend-agnostic.
+- `src/cuhk_shenzhen_web2api/cloud_browser.py`: rate-limited Firecrawl Cloud browser-session adapter.
+- `src/cuhk_shenzhen_web2api/browser_backend.py`: structural interface shared by browser adapters.
+- `src/cuhk_shenzhen_web2api/browser_provider.py`: resolves Firecrawl Cloud vs local Steel browser settings and owns backend-aware session IDs.
+- `src/cuhk_shenzhen_web2api/steel_browser.py`: HTTP adapter for the local Steel executor.
 - `src/cuhk_shenzhen_web2api/firecrawl_provider.py`: resolves the Firecrawl backend (cloud vs local) and builds the SDK client. The only place that reads `FIRECRAWL_*` configuration.
 - `src/cuhk_shenzhen_web2api/login.py`: SSO navigation and authentication flow.
 - `src/cuhk_shenzhen_web2api/env.py`: `.env` and process-environment loading.
@@ -22,6 +25,7 @@ The installed console entry point, `cuhk-shenzhen-web2api`, currently calls the 
 - `src/cuhk_shenzhen_web2api/tool_proxy.py`: tool registration, execution, and logging.
 - `src/cuhk_shenzhen_web2api/scripts/`: thin command-line runners for login, chat, probing, scraping, and serving.
 - `deploy/firecrawl/`: repository-managed, loopback-only Firecrawl scrape stack adapted from the pinned open-source upstream implementation.
+- `deploy/steel/`: repository-managed, loopback-only Steel browser plus the Node JavaScript executor.
 - `scripts/`: local manual test and server helper scripts; this is not where shared application logic belongs.
 - `docs/tool_proxy.md`: tool-proxy API and extension details.
 - `data/`: gitignored live-session state, cookies, replies, scans, and downloaded bundles.
@@ -31,6 +35,14 @@ Keep shared behavior in package modules. Command-line scripts should only parse 
 ## Setup
 
 The supported development environment is Windows PowerShell.
+
+If a dependency download, image pull, or other network operation fails or
+stalls, retry it through the local HTTP proxy on port 7897. For host-side
+commands use `HTTP_PROXY=http://127.0.0.1:7897` and
+`HTTPS_PROXY=http://127.0.0.1:7897`; for traffic originating inside Docker use
+`http://host.docker.internal:7897`. Keep loopback service traffic out of the
+proxy with `NO_PROXY`/`no_proxy` as described below. Do not commit proxy
+credentials if the proxy configuration later requires authentication.
 
 1. Install `uv` and Python 3.12.
 2. Install the locked project and development dependencies:
@@ -57,7 +69,7 @@ Bare `python` and `py` may resolve to the active environment, but do not rely on
 
 ## Firecrawl backends
 
-`firecrawl_provider.resolve_settings()` is the single source of truth. It reads `.env` (via `env.load_env()`) and returns a validated `FirecrawlSettings`; `build_client()` turns that into the SDK client and `open_browser_session()` additionally resumes or creates a browser session. The local backend currently supports scrape calls only. Browser-session runners fail explicitly until the separate local browser backend is implemented.
+`firecrawl_provider.resolve_settings()` is the single source of truth for scrape settings. It reads `.env` (via `env.load_env()`) and returns a validated `FirecrawlSettings`; `build_client()` turns that into the SDK client. The local Firecrawl backend supports scrape calls only.
 
 | Variable | Meaning |
 | --- | --- |
@@ -68,7 +80,7 @@ Bare `python` and `py` may resolve to the active environment, but do not rely on
 | `FIRECRAWL_MAX_TTL` | Browser-session TTL ceiling. Defaults to 3600 and is capped there because the v2 API rejects larger values on both backends. |
 | `FIRECRAWL_TIMEOUT` | HTTP timeout in seconds. Unset means the SDK default. |
 
-Cloud and local scrape backends speak the same Firecrawl v2 protocol. `CloudBrowser` and `ChatClient` still depend on the cloud browser-session API.
+Cloud and local scrape backends speak the same Firecrawl v2 protocol.
 
 ### Repository-managed local scrape stack
 
@@ -86,15 +98,43 @@ Use the PowerShell helper rather than invoking an ad-hoc Compose checkout:
 
 `verify` calls the real local `/v2/scrape` endpoint against `https://example.com`; it does not contact CUHK. Configure the Python client with `FIRECRAWL_MODE=local`, `FIRECRAWL_API_URL=http://127.0.0.1:3002`, and an empty `FIRECRAWL_API_KEY`.
 
-### The self-hosted browser-service caveat
+## Browser backends
 
-**The local stack intentionally does not serve the browser-session API.** Firecrawl's open-source API answers HTTP 503 `Browser feature is not configured (BROWSER_SERVICE_URL is missing).` whenever `BROWSER_SERVICE_URL` is unset, and its open-source `playwright-service` implements scrape requests rather than persistent sessions. This project will provide its own local browser backend in a later phase instead of cloning Firecrawl's private browser service.
+`browser_provider.resolve_settings()` independently selects browser sessions. When `BROWSER_BACKEND` is unset, it follows `FIRECRAWL_MODE`: cloud selects `firecrawl-cloud`, local selects `steel-local`.
+
+| Variable | Meaning |
+| --- | --- |
+| `BROWSER_BACKEND` | `firecrawl-cloud` or `steel-local`; aliases `firecrawl`, `cloud`, `steel`, and `local` are accepted. |
+| `FIRECRAWL_BROWSER_API_URL` | Optional Firecrawl Cloud browser URL when scrape calls use a different Firecrawl backend. |
+| `STEEL_EXECUTOR_URL` | Local executor URL, default `http://127.0.0.1:3003`. |
+| `STEEL_EXECUTOR_TOKEN` | Shared token for the executor, default `steel-local-only`; override it on shared machines. |
+| `STEEL_EXECUTOR_TIMEOUT` | Executor HTTP timeout in seconds, default 130. |
+
+Browser session IDs are backend-aware: Firecrawl Cloud uses `data/chat_session/session_id.txt`; Steel uses `data/chat_session/steel_session_id.txt`. Never copy an ID between backends. The aTrust session is bound to the browser's egress IP, so keep cookies paired with their original browser backend.
+
+### Repository-managed local Steel stack
+
+`deploy/steel/compose.yaml` runs the pinned Steel Browser API and a small Node executor. The executor uses Playwright over Steel's CDP WebSocket and preserves the existing JavaScript contract: a persistent `page` handle, top-level `await`, last-expression results, and persistent top-level `var` bindings. It executes arbitrary code by design, so its port is loopback-only and token-protected.
+
+```powershell
+.\scripts\local_steel.ps1 up
+.\scripts\local_steel.ps1 verify
+.\scripts\local_steel.ps1 status
+.\scripts\local_steel.ps1 logs
+.\scripts\local_steel.ps1 down
+```
+
+`verify` opens `https://example.com` in a temporary tab and closes it, without navigating an existing authenticated page. The named Docker volume preserves the Chromium profile across restarts.
+
+### The self-hosted Firecrawl browser-service caveat
+
+**The local Firecrawl stack intentionally does not serve the browser-session API.** Firecrawl's open-source API answers HTTP 503 `Browser feature is not configured (BROWSER_SERVICE_URL is missing).` whenever `BROWSER_SERVICE_URL` is unset, and its open-source `playwright-service` implements scrape requests rather than persistent sessions. Use `BROWSER_BACKEND=steel-local` for fully local browser workflows.
 
 Consequences for local mode:
 
 - `scrape_chat.py` works, because `/v2/scrape` is part of the stock stack.
-- `login.py`, `send_message.py`, `probe.py`, and `server.py` all fail at session creation in local mode. `cloud_browser.create_session()` converts the 503 into `BrowserServiceUnavailable`, and `firecrawl_provider.open_browser_session()` re-raises it as an actionable `ConfigurationError`.
-- The aTrust session is bound to the browser's egress IP, so the browser backend and the cookie file must stay paired. Switching backends invalidates `data/chat_session/session_id.txt`; delete it (or pass `--resume` with a session from the same backend) so the next run logs in again.
+- `login.py`, `send_message.py`, `probe.py`, and `server.py` use `browser_provider` and therefore work with local Steel.
+- Directly calling `firecrawl_provider.open_browser_session()` against stock local Firecrawl still raises an actionable `ConfigurationError`.
 
 Do not paper over this by falling back to the cloud automatically — a silent fallback would hide a misconfiguration and burn cloud quota.
 
@@ -129,6 +169,12 @@ Run all four before finishing a code change. For a quick syntax-only sanity chec
 
 ```powershell
 .venv\Scripts\python.exe scripts\test_firecrawl_provider.py 2>&1
+```
+
+`scripts/test_browser_provider.py` is the offline smoke runner for Firecrawl Cloud vs local Steel selection, backend-specific session files, redaction, and Steel result/error adaptation:
+
+```powershell
+.venv\Scripts\python.exe scripts\test_browser_provider.py 2>&1
 ```
 
 Do not treat `scripts/e2e_test.py` as a routine test. It expects a running authenticated server, calls production chat endpoints, changes the selected model, sends messages, and consumes the rate-limited Firecrawl service.

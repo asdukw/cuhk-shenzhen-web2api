@@ -9,8 +9,8 @@ Merges the old probe_chat + probe_chat2 recon into one runnable script:
 Outputs land in data/chat_session/ (api_surface.json, chat_assets.json,
 config.json, big_bundle_scan.json, bundles/*.js).
 
-The browser backend (Firecrawl Cloud or a locally deployed instance) comes from
-`FIRECRAWL_MODE` in .env; see `firecrawl_provider`.
+The browser backend (Firecrawl Cloud or local Steel) comes from
+`BROWSER_BACKEND` in .env; see `browser_provider`.
 
 Usage:
     python src/cuhk_shenzhen_web2api/scripts/probe.py [--resume SID] [--force]
@@ -25,12 +25,12 @@ import re
 import sys
 from pathlib import Path
 
-from cuhk_shenzhen_web2api import cloud_browser, env, firecrawl_provider, login
+from cuhk_shenzhen_web2api import browser_provider, env, login
+from cuhk_shenzhen_web2api.browser_backend import BrowserBackend
 from cuhk_shenzhen_web2api.chat_client import ChatClient
 from cuhk_shenzhen_web2api.paths import (
     BUNDLES_DIR,
     CHAT_DATA_DIR,
-    SESSION_ID_FILE,
 )
 
 ALL_BUNDLES = [
@@ -84,7 +84,7 @@ def step_session(client: ChatClient) -> None:
     print(" ", f"config.json saved -> {CHAT_DATA_DIR / 'config.json'}")
 
 
-def step_assets(cb: cloud_browser.CloudBrowser) -> None:
+def step_assets(cb: BrowserBackend) -> None:
     out = CHAT_DATA_DIR / "chat_assets.json"
     scan = cb.page_scan()
     (CHAT_DATA_DIR / "chat_assets.json").write_text(
@@ -100,7 +100,7 @@ def step_assets(cb: cloud_browser.CloudBrowser) -> None:
     print(f"  saved -> {out.name}")
 
 
-def step_bundle_surface(cb: cloud_browser.CloudBrowser, force: bool) -> None:
+def step_bundle_surface(cb: BrowserBackend, force: bool) -> None:
     out = CHAT_DATA_DIR / "api_surface.json"
     if out.exists() and not force:
         print(f"\n=== bundle API surface === (cached {out.name})")
@@ -158,7 +158,7 @@ def step_bundle_surface(cb: cloud_browser.CloudBrowser, force: bool) -> None:
         print("  bundle surface parse failed:", raw[:800])
 
 
-def step_download_bundles(cb: cloud_browser.CloudBrowser, force: bool) -> None:
+def step_download_bundles(cb: BrowserBackend, force: bool) -> None:
     BUNDLES_DIR.mkdir(parents=True, exist_ok=True)
     cached = {p.name for p in BUNDLES_DIR.glob("*.js")}
     todo = [u for u in SMALL_BUNDLES if Path(u).name not in cached]
@@ -201,7 +201,7 @@ def step_download_bundles(cb: cloud_browser.CloudBrowser, force: bool) -> None:
         print("  bundle download parse failed:", raw[:800])
 
 
-def step_big_scan(cb: cloud_browser.CloudBrowser, force: bool) -> None:
+def step_big_scan(cb: BrowserBackend, force: bool) -> None:
     out = CHAT_DATA_DIR / "big_bundle_scan.json"
     if out.exists() and not force:
         print(f"\n=== big bundle scan === (cached {out.name})")
@@ -252,7 +252,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--resume", default=None, help="Resume existing Firecrawl browser sid"
+        "--resume", default=None, help="Resume an existing browser session id"
     )
     parser.add_argument(
         "--force", action="store_true", help="Re-download despite cached artifacts"
@@ -261,13 +261,13 @@ def main() -> None:
 
     config = env.load_env()
     try:
-        settings = firecrawl_provider.resolve_settings(config)
-        print(f"backend   {settings.mode} ({settings.api_url})", flush=True)
-        _app, cb = firecrawl_provider.open_browser_session(
-            settings, args.resume or cloud_browser.load_session_id(SESSION_ID_FILE)
+        settings = browser_provider.resolve_settings(config)
+        print(f"backend   {settings.describe()}", flush=True)
+        cb = browser_provider.open_browser_session(
+            settings, args.resume or browser_provider.load_session_id(settings)
         )
-    except firecrawl_provider.ConfigurationError as exc:
-        print(f"firecrawl backend unusable: {exc}", file=sys.stderr)
+    except browser_provider.ConfigurationError as exc:
+        print(f"browser backend unusable: {exc}", file=sys.stderr)
         sys.exit(1)
     print("session   ", cb.sid, flush=True)
 
