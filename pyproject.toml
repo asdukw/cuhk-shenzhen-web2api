@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
-    { name = "asdukw", email = "113411984+asdukw@users.noreply.github.com" }
+    { name = "asdukw", email = "asdukw@outlook.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
@@ -12,6 +12,10 @@ dependencies = [
     "firecrawl",
     "uvicorn[standard]>=0.52.4",
 ]
+
+[project.optional-dependencies]
+local = ["httpx>=0.28,<1", "playwright>=1.50,<2"]
+kilo = ["httpx>=0.28,<1", "playwright>=1.50,<2", "jsonschema>=4.23,<5"]
 
 [dependency-groups]
 dev = [

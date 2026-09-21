@@ -9,8 +9,10 @@ same browser session.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
+import webbrowser
 
 from .cloud_browser import CloudBrowser
 from .paths import CHAT_URL
@@ -86,11 +88,101 @@ def login_flow(
     return cb.url()
 
 
-def ensure_on_chat(
-    cb: CloudBrowser, username: str, password: str, url: str = CHAT_URL
+def looks_on_chat(url: str) -> bool:
+    """Cheap URL check: on the chat app, not an SSO / aTrust gate."""
+    if not url or "/chat" not in url:
+        return False
+    lowered = url.lower()
+    return not any(token in lowered for token in ("adfs", "atrust", "login.microsoft"))
+
+
+def is_authenticated(cb: CloudBrowser, cur: str | None = None) -> bool:
+    """True when the cloud page is on /chat/ and /.auth/me/ succeeds."""
+    cur = cb.url() if cur is None else cur
+    if not looks_on_chat(cur):
+        return False
+    data = cb.js_json("""
+      var __r = await page.evaluate(async () => {
+        try {
+          const r = await fetch("/.auth/me/", {redirect: "manual"});
+          const t = await r.text();
+          let body = null;
+          try { body = JSON.parse(t); } catch (e) {}
+          return {status: r.status, body: body};
+        } catch (e) {
+          return {status: 0, error: String(e)};
+        }
+      });
+      JSON.stringify(__r)
+    """)
+    if not isinstance(data, dict):
+        return False
+    return data.get("status") == 200
+
+
+def wait_for_manual_login(
+    cb: CloudBrowser,
+    url: str = CHAT_URL,
+    max_polls: int = 40,
 ) -> str:
-    """If the page is not on the chat app yet, run the login flow."""
+    """Open the chat URL and wait while a human finishes SSO in the live view."""
+    landed = cb.js(
+        f'await page.goto({json.dumps(url)}, {{waitUntil: "domcontentloaded"}}); '
+        f"await page.waitForTimeout(2000); await page.url()"
+    )
+    live = cb.live_url()
+    print("=" * 60, flush=True)
+    print("Please log in manually at https://ai.cuhk.edu.cn/chat/", flush=True)
+    if live:
+        print("Open this cloud-browser live view and complete SSO there:", flush=True)
+        print(live, flush=True)
+        with contextlib.suppress(Exception):
+            webbrowser.open(live)
+    else:
+        print(
+            "No live-view URL yet; keep this process running and retry after the "
+            "first browser call returns a live view.",
+            flush=True,
+        )
+    print("Waiting until the session lands on the logged-in chat app...", flush=True)
+    print("=" * 60, flush=True)
+
+    if is_authenticated(cb, landed):
+        return landed
+
+    for i in range(max_polls):
+        cur = cb.url()
+        live = cb.live_url() or live
+        print(f"[login {i + 1}/{max_polls}] {cur}", flush=True)
+        if live:
+            print(f"live view: {live}", flush=True)
+        if is_authenticated(cb, cur):
+            return cur
+        time.sleep(6)
+    return cb.url()
+
+
+def ensure_on_chat(
+    cb: CloudBrowser,
+    username: str = "",
+    password: str = "",
+    url: str = CHAT_URL,
+    *,
+    manual: bool | None = None,
+) -> str:
+    """If the page is not on the chat app yet, run SSO or wait for manual login."""
     cur = cb.url()
-    if cur and "/chat" in cur:
+    if looks_on_chat(cur) and is_authenticated(cb, cur):
         return cur
-    return login_flow(cb, username, password, url=url)
+    if manual is None:
+        manual = not (username and password)
+    if manual:
+        return wait_for_manual_login(cb, url=url)
+    final = login_flow(cb, username, password, url=url)
+    # Prefer URL landing over a second /.auth/me probe: after SSO the free
+    # tier is often rate-limited, and a transient probe miss must not restart
+    # the whole flow as manual login.
+    if looks_on_chat(final):
+        return final
+    print("automatic SSO did not finish — switching to manual login", flush=True)
+    return wait_for_manual_login(cb, url=url)

@@ -97,8 +97,8 @@ def main() -> None:
     final = login.ensure_on_chat(
         cb, env.chat_username(config), env.chat_password(config)
     )
-    if "/chat" not in (final or ""):
-        print("not on /chat/:", final, file=sys.stderr)
+    if not login.looks_on_chat(final or ""):
+        print("not on authenticated /chat/:", final, file=sys.stderr)
         sys.exit(1)
 
     client = ChatClient(cb, quota_pool=args.quota_pool)

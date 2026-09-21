@@ -26,11 +26,30 @@ FIRECRAWL_MAX_TTL_SECONDS = 3600
 
 class CloudBrowser:
     def __init__(
-        self, app: Firecrawl, sid: str, rate_sleep: float = RATE_SLEEP_SECONDS
+        self,
+        app: Firecrawl,
+        sid: str,
+        rate_sleep: float = RATE_SLEEP_SECONDS,
+        live_view_url: str | None = None,
+        interactive_live_view_url: str | None = None,
     ):
         self.app = app
         self.sid = sid
         self.rate_sleep = rate_sleep
+        self.live_view_url = live_view_url
+        self.interactive_live_view_url = interactive_live_view_url
+
+    def live_url(self) -> str:
+        """Prefer the click-and-type live view so a human can finish SSO."""
+        return self.interactive_live_view_url or self.live_view_url or ""
+
+    def _capture_live_urls(self, res: object) -> None:
+        interactive = getattr(res, "interactive_live_view_url", None)
+        view = getattr(res, "live_view_url", None)
+        if interactive:
+            self.interactive_live_view_url = interactive
+        if view:
+            self.live_view_url = view
 
     # ---- low-level ----
 
@@ -52,6 +71,7 @@ class CloudBrowser:
                 return f"EXEC_ERR {exc}"
             if getattr(res, "error", None):
                 return f"ERROR {res.error}"
+            self._capture_live_urls(res)
             return (res.result or res.stdout or "").strip()
         return "RATE_LIMIT"
 
@@ -117,15 +137,41 @@ def create_session(
     # Firecrawl rejects browser sessions whose TTL exceeds one hour.
     ttl = max(1, min(ttl, FIRECRAWL_MAX_TTL_SECONDS))
     activity_ttl = max(1, min(activity_ttl, ttl))
-    session = app.browser(ttl=ttl, activity_ttl=activity_ttl)
+    session = app.browser(ttl=ttl, activity_ttl=activity_ttl, stream_web_view=True)
     sid = session.id
     if sid is None:
         raise RuntimeError("browser session created without an id")
-    return CloudBrowser(app, sid)
+    return CloudBrowser(
+        app,
+        sid,
+        live_view_url=getattr(session, "live_view_url", None),
+        interactive_live_view_url=getattr(session, "interactive_live_view_url", None),
+    )
 
 
 def resume_session(app: Firecrawl, sid: str) -> CloudBrowser:
-    return CloudBrowser(app, sid)
+    cb = CloudBrowser(app, sid)
+    _attach_live_urls(cb)
+    return cb
+
+
+def _attach_live_urls(cb: CloudBrowser) -> None:
+    """Fill live-view URLs for a resumed session from list_browsers if possible."""
+    list_fn = getattr(cb.app, "list_browsers", None)
+    if list_fn is None:
+        return
+    try:
+        listing = list_fn()
+    except Exception:  # noqa: BLE001 - live view is optional
+        return
+    sessions = getattr(listing, "sessions", None) or []
+    for session in sessions:
+        if getattr(session, "id", None) == cb.sid:
+            cb.live_view_url = getattr(session, "live_view_url", None)
+            cb.interactive_live_view_url = getattr(
+                session, "interactive_live_view_url", None
+            )
+            return
 
 
 def get_or_create_session(

@@ -9,14 +9,26 @@ wheels/
 # Virtual environments
 .venv
 
-# Secrets
-.env
-
 # Editors
 .vscode/
+.ruff_cache/
 
-# Crawl outputs
-data/
+# Optional local CLI auth cache
+.firecrawl_cli_auth.json
 
 # 本地 agent 配置与技能（不纳入版本控制）
 .agents/
+
+# 归档脱敏版（构建产物）
+AGENTS.sharesafe.md
+
+# Isolated local backend credentials, databases and browser binaries
+.web2api-v2/
+.playwright-browsers/
+.env.v2
+
+# Local secrets & campus session data (never commit)
+/.env
+/data/chat_session/cookies.json
+/data/chat_session/session_id.txt
+/data/chat_session/jobs/

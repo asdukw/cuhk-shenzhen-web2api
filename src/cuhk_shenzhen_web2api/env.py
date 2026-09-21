@@ -11,6 +11,7 @@ ENV_FILE = BASE_DIR / ".env"
 # Keys that matter to this project (in .env or the process environment).
 KNOWN_KEYS = (
     "FIRECRAWL_API_KEY",
+    "WEB2API_API_KEY",
     "CHAT_USERNAME",
     "CHAT_PASSWORD",
     "CHAT_COOKIE",
@@ -47,3 +48,8 @@ def chat_password(env: dict[str, str] | None = None) -> str:
 def firecrawl_api_key(env: dict[str, str] | None = None) -> str:
     env = env or load_env()
     return env.get("FIRECRAWL_API_KEY", "").strip()
+
+
+def web2api_api_key(env: dict[str, str] | None = None) -> str:
+    env = env or load_env()
+    return env.get("WEB2API_API_KEY", "").strip()

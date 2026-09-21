@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --extra kilo --group dev
       - name: Compile all modules
         run: uv run python -m compileall -q src/cuhk_shenzhen_web2api
       - name: Lint (ruff check)
@@ -23,3 +23,18 @@ jobs:
         run: uv run ruff format --check src
       - name: Type check (pyright)
         run: uv run pyright
+      - name: Install Chromium (loopback browser tests)
+        run: uv run playwright install --with-deps chromium
+      - name: Tests (offline suites + loopback browser integration)
+        run: >
+          uv run python -m unittest
+          tests.test_v2_store
+          tests.test_v2_engine
+          tests.test_v2_app
+          tests.test_v2_transport
+          tests.test_v2_optimization
+          tests.test_v2_agent_probe
+          tests.test_legacy_server
+          tests.test_kilo_bridge
+          tests.test_kilo_capture
+          tests.test_v2_browser_integration -v
