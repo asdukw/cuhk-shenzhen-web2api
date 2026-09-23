@@ -11,7 +11,8 @@ The services bind only to loopback:
 - Steel CDP proxy: `ws://127.0.0.1:9223`
 - authenticated executor: `http://127.0.0.1:3003`
 
-Start and verify the backend from PowerShell:
+`uv run gateway` starts the stack with the HTTP server and stops the services it
+started on exit. To manage Steel separately from the gateway, use PowerShell:
 
 ```powershell
 .\scripts\local_steel.ps1 up

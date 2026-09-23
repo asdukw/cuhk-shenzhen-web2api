@@ -21,6 +21,7 @@ dev = [
 
 [project.scripts]
 cuhk-shenzhen-web2api = "cuhk_shenzhen_web2api:main"
+gateway = "cuhk_shenzhen_web2api.scripts.server:main"
 
 [tool.pyright]
 pythonVersion = "3.12"
