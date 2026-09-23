@@ -3,8 +3,7 @@
 Creates a new browser session (or resumes one with --resume), runs
 the SSO login flow if needed, and saves session-id + cookies under data/.
 
-The browser backend (Firecrawl Cloud or local Steel) comes from
-`BROWSER_BACKEND` in .env; see `browser_provider`.
+The local Steel browser settings come from .env; see `browser_provider`.
 
 Usage:
     python src/cuhk_shenzhen_web2api/scripts/login.py [--resume SID] [--no-save]

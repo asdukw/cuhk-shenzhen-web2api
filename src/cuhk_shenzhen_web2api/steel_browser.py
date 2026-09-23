@@ -17,7 +17,7 @@ class SteelBrowserError(RuntimeError):
 
 
 class SteelBrowser:
-    """Expose the same JavaScript contract as ``CloudBrowser`` over HTTP."""
+    """Execute persistent browser JavaScript through the local Steel executor."""
 
     def __init__(
         self,

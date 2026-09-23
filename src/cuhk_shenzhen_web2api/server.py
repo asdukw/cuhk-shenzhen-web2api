@@ -5,11 +5,10 @@ the chat as a JSON API. Every request goes through the live page context
 (cookies + CSRF + IP-bound aTrust session), so the underlying service considers
 it a normal browser conversation.
 
-The browser backend is Firecrawl Cloud or local Steel, selected by
-`BROWSER_BACKEND` (see `browser_provider`).
+Browser sessions run through the local Steel executor (see `browser_provider`).
 
-Concurrency: the shared browser + the cloud free tier's ~3 req/min limit mean
-calls must be serialized. A module-level async lock guards all ChatClient work.
+Concurrency: calls sharing one browser session must be serialized. A module-level
+async lock guards all ChatClient work.
 
 The default model can be switched at runtime (POST /model); a `message` that
 starts with /model is handled as a slash command instead of being sent to the
@@ -34,7 +33,7 @@ from pydantic import BaseModel, Field
 
 log = logging.getLogger("web2api")
 
-from . import browser_provider, env, firecrawl_provider, login
+from . import browser_provider, env, login
 from .chat_client import ChatClient, ChatReply
 from .tool_proxy import (
     ToolCall,
@@ -99,7 +98,6 @@ class Health(BaseModel):
     session_id: str
     url: str
     user: Any = None
-    firecrawl: dict[str, Any] | None = None
     browser: dict[str, Any] | None = None
 
 
@@ -158,9 +156,7 @@ def _ensure_runtime() -> ChatClient:
     if _shared["client"] is not None:
         return _shared["client"]
     config = env.load_env()
-    firecrawl_settings = firecrawl_provider.resolve_settings(config)
     browser_settings = browser_provider.resolve_settings(config)
-    log.info("firecrawl backend: %s", firecrawl_settings.describe())
     log.info("browser backend: %s", browser_settings.describe())
     cb = browser_provider.open_browser_session(
         browser_settings, browser_provider.load_session_id(browser_settings)
@@ -174,10 +170,7 @@ def _ensure_runtime() -> ChatClient:
     client = ChatClient(cb)
     _shared["cb"] = cb
     _shared["client"] = client
-    _shared["settings"] = {
-        "firecrawl": firecrawl_settings,
-        "browser": browser_settings,
-    }
+    _shared["settings"] = browser_settings
     return client
 
 
@@ -264,16 +257,11 @@ async def health() -> Health:
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
     cb = _shared["cb"]
-    settings = _shared["settings"] or {}
-    firecrawl_settings = settings.get("firecrawl")
-    browser_settings = settings.get("browser")
+    browser_settings = _shared["settings"]
     return Health(
         session_id=cb.sid,
         url=cb.url(),
         user=client.whoami().get("body"),
-        firecrawl=firecrawl_settings.describe()
-        if firecrawl_settings is not None
-        else None,
         browser=browser_settings.describe() if browser_settings is not None else None,
     )
 

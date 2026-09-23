@@ -2,7 +2,7 @@
 
 The browser session must already be logged in and sitting on /chat/. All HTTP
 calls go through the page context so the aTrust/ADFS-cookie + CSRF session is
-attached automatically (the session is IP-bound to the cloud run).
+attached automatically (the session is IP-bound to the browser environment).
 
 Core endpoint: POST /chat/  ->  application/x-ndjson+json  (one JSON line each),
 events: start / hb / msg / end.

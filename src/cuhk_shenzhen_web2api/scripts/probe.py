@@ -9,8 +9,7 @@ Merges the old probe_chat + probe_chat2 recon into one runnable script:
 Outputs land in data/chat_session/ (api_surface.json, chat_assets.json,
 config.json, big_bundle_scan.json, bundles/*.js).
 
-The browser backend (Firecrawl Cloud or local Steel) comes from
-`BROWSER_BACKEND` in .env; see `browser_provider`.
+The local Steel browser settings come from .env; see `browser_provider`.
 
 Usage:
     python src/cuhk_shenzhen_web2api/scripts/probe.py [--resume SID] [--force]

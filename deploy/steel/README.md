@@ -2,7 +2,7 @@
 
 This stack runs [Steel Browser](https://github.com/steel-dev/steel-browser)
 and a small repository-owned executor that preserves the JavaScript contract
-used by `CloudBrowser`: a persistent `page` handle, top-level `await`, the last
+used by the chat client: a persistent `page` handle, top-level `await`, the last
 expression as the result, and persistent top-level `var` bindings.
 
 The services bind only to loopback:
@@ -20,10 +20,9 @@ Start and verify the backend from PowerShell:
 The verification opens `https://example.com` in a temporary tab and closes the
 tab afterward, so it does not navigate an existing authenticated chat page.
 
-Use it together with the local Firecrawl scrape stack:
+Configure the Python client in `.env`:
 
 ```dotenv
-FIRECRAWL_MODE=local
 BROWSER_BACKEND=steel-local
 STEEL_EXECUTOR_URL=http://127.0.0.1:3003
 STEEL_EXECUTOR_TOKEN=steel-local-only
@@ -44,7 +43,8 @@ Other lifecycle commands:
 
 The named `steel-profile` volume preserves the Chromium profile across
 container restarts. `data/chat_session/steel_session_id.txt` identifies the
-currently active Steel session and is separate from the Firecrawl Cloud ID.
+currently active Steel session. Older session IDs from other backends cannot be
+reused with Steel.
 
 `STEEL_IMAGE` can override the pinned official image when validating a locally
 built copy of the same Steel release. If unset, Compose uses the official image

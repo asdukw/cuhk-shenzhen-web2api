@@ -4,8 +4,7 @@ Uses a logged-in browser session (resumes the backend-specific session ID or
 ``--resume``). Writes the raw NDJSON stream and a parsed summary to
 ``data/chat_session/last_stream.ndjson`` / ``last_reply.json``.
 
-The browser backend (Firecrawl Cloud or local Steel) comes from
-`BROWSER_BACKEND` in .env; see `browser_provider`.
+The local Steel browser settings come from .env; see `browser_provider`.
 
 Usage:
     python src/cuhk_shenzhen_web2api/scripts/send_message.py "你好" \
