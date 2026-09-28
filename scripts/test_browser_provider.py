@@ -58,23 +58,31 @@ with (
     patch.object(env, "ENV_FILE", Path(directory) / ".env"),
 ):
     Path(directory, ".env").write_text(
-        "USERNAME=\nPASSWORD=\n",
+        "USERNAME=dotenv-user\nPASSWORD=dotenv-password\n",
         encoding="utf-8",
     )
     with patch.dict(
         os.environ,
-        {"USERNAME": "process-user", "PASSWORD": "process-password"},
+        {
+            "USERNAME": "windows-user",
+            "PASSWORD": "windows-password",
+            "CHAT_USERNAME": "chat-user",
+            "CHAT_PASSWORD": "chat-password",
+        },
         clear=False,
     ):
         values = env.load_env()
+        check("dotenv user wins over OS username", values["USERNAME"], "dotenv-user")
         check(
-            "process env overrides empty .env user", values["USERNAME"], "process-user"
-        )
-        check(
-            "process env overrides empty .env password",
+            "dotenv password wins over OS password",
             values["PASSWORD"],
-            "process-password",
+            "dotenv-password",
         )
+        check("process chat user overrides", values["CHAT_USERNAME"], "chat-user")
+        check(
+            "process chat password overrides", values["CHAT_PASSWORD"], "chat-password"
+        )
+        check("chat user alias preferred", env.chat_username(values), "chat-user")
 
 with (
     TemporaryDirectory() as directory,

@@ -14,11 +14,22 @@ KNOWN_KEYS = (
     "STEEL_EXECUTOR_URL",
     "STEEL_EXECUTOR_TOKEN",
     "STEEL_EXECUTOR_TIMEOUT",
+    "STEEL_SOURCE_DIR",
+    "STEEL_REVISION",
+    "STEEL_API_PORT",
+    "STEEL_CDP_PORT",
+    "STEEL_HEADLESS",
+    "CHROME_EXECUTABLE_PATH",
+    "CHROME_USER_DATA_DIR",
     "CHAT_USERNAME",
     "CHAT_PASSWORD",
     "USERNAME",
     "PASSWORD",
 )
+
+# USERNAME/PASSWORD are common OS variables (especially on Windows), so they
+# are read from .env only. Use CHAT_USERNAME/CHAT_PASSWORD for process overrides.
+_FILE_ONLY_KEYS = frozenset({"USERNAME", "PASSWORD"})
 
 
 def load_env() -> dict[str, str]:
@@ -30,9 +41,12 @@ def load_env() -> dict[str, str]:
             if line and not line.startswith("#") and "=" in line:
                 k, _, v = line.partition("=")
                 env[k.strip()] = v.strip().strip('"').strip("'")
-    # Process environment values override .env, including when .env contains
-    # an empty placeholder such as USERNAME= or PASSWORD=.
+    # Process environment values override project-specific .env keys.
+    # Generic USERNAME/PASSWORD are excluded because Windows always defines
+    # USERNAME for the current desktop account.
     for key in KNOWN_KEYS:
+        if key in _FILE_ONLY_KEYS:
+            continue
         value = os.environ.get(key)
         if value:
             env[key] = value
