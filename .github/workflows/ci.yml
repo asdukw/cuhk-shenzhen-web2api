@@ -23,3 +23,9 @@ jobs:
         run: uv run ruff format --check src
       - name: Type check (pyright)
         run: uv run pyright
+      - name: Offline smoke tests
+        run: |
+          uv run python scripts/test_browser_provider.py
+          uv run python scripts/test_local_steel.py
+          uv run python scripts/test_tool_proxy.py
+          uv run python scripts/test_server_helpers.py

@@ -51,7 +51,7 @@ Always invoke repository scripts with `.venv\Scripts\python.exe <script> 2>&1`. 
 
 ## Safe verification
 
-There is no discovered test suite. Run all four CI checks before finishing code changes:
+There is no pytest test suite. Run all four CI checks before finishing code changes:
 
 ```powershell
 uv run ruff check src
@@ -64,7 +64,9 @@ Run offline smoke scripts as relevant:
 
 ```powershell
 .venv\Scripts\python.exe scripts\test_browser_provider.py 2>&1
+.venv\Scripts\python.exe scripts\test_local_steel.py 2>&1
 .venv\Scripts\python.exe scripts\test_tool_proxy.py 2>&1
+.venv\Scripts\python.exe scripts\test_server_helpers.py 2>&1
 ```
 
 Do not use `scripts/e2e_test.py` as a routine test: it needs an authenticated server, changes the model, sends messages, and consumes production service quota.

@@ -11,12 +11,17 @@ events: start / hb / msg / end.
 from __future__ import annotations
 
 import base64
+import binascii
 import json
+import re
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import unquote_to_bytes, urlsplit
+
+import requests
 
 from .browser_backend import BrowserBackend
 
@@ -29,6 +34,10 @@ UPLOAD_FILE_ENDPOINT = "/uploadFile/"
 UPLOAD_MEDIA_ENDPOINT = "/uploadMedia/"
 
 _DEFAULT_PARAMS = {"tool_proxy": False}
+_MAX_REMOTE_UPLOAD_BYTES = 25 * 1024 * 1024
+_DATA_URL_RE = re.compile(
+    r"^data:(?P<mime>[^;,]*)(?P<base64>;base64)?,(?P<data>.*)$", re.DOTALL
+)
 
 
 class ChatAPIError(RuntimeError):
@@ -293,9 +302,22 @@ class ChatClient:
         The bytes are pushed through the browser session, so keep files modest.
         """
         p = Path(path)
-        payload = base64.b64encode(p.read_bytes()).decode("ascii")
+        return self.upload_bytes(
+            p.read_bytes(),
+            mime=_guess_mime(p),
+            media=media,
+        )
+
+    def upload_bytes(
+        self,
+        data: bytes,
+        *,
+        mime: str = "application/octet-stream",
+        media: bool = False,
+    ) -> str:
+        """Upload in-memory bytes and return the upstream media id."""
+        payload = base64.b64encode(data).decode("ascii")
         endpoint = UPLOAD_MEDIA_ENDPOINT if media else UPLOAD_FILE_ENDPOINT
-        mime = _guess_mime(p)
         res = self.cb.js_json(
             f"""
           var __b64 = {json.dumps(payload)};
@@ -325,13 +347,60 @@ class ChatClient:
             )
         body = res.get("txt", "")
         try:
-            data = json.loads(body)
+            data_obj = json.loads(body)
         except json.JSONDecodeError as exc:
             raise ChatAPIError(f"upload bad response: {body[:200]}") from exc
-        media_id = data.get("media_id")
+        media_id = data_obj.get("media_id") if isinstance(data_obj, dict) else None
         if not media_id:
-            raise ChatAPIError("upload response has no media_id", detail=data)
-        return media_id
+            raise ChatAPIError("upload response has no media_id", detail=data_obj)
+        return str(media_id)
+
+    def upload_image_source(self, source: str, *, timeout: float = 30.0) -> str:
+        """Upload a Responses API image source (data URL or HTTP URL)."""
+        if source.startswith("data:"):
+            return self.upload_data_url(source)
+        return self.upload_url(source, timeout=timeout)
+
+    def upload_data_url(self, value: str) -> str:
+        """Decode and upload a data: URL to the media endpoint."""
+        match = _DATA_URL_RE.fullmatch(value.strip())
+        if match is None:
+            raise ChatAPIError("invalid image data URL")
+        encoded = match.group("data")
+        try:
+            data = (
+                base64.b64decode(encoded, validate=True)
+                if match.group("base64")
+                else unquote_to_bytes(encoded)
+            )
+        except (ValueError, binascii.Error) as exc:
+            raise ChatAPIError("invalid base64 image data URL") from exc
+        return self.upload_bytes(
+            data, mime=match.group("mime") or "image/*", media=True
+        )
+
+    def upload_url(self, value: str, *, timeout: float = 30.0) -> str:
+        """Download a remote image through the host and upload it to chat."""
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ChatAPIError(f"unsupported image URL: {value!r}")
+        try:
+            with requests.get(value, stream=True, timeout=timeout) as response:
+                response.raise_for_status()
+                chunks: list[bytes] = []
+                size = 0
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > _MAX_REMOTE_UPLOAD_BYTES:
+                        raise ChatAPIError("remote image exceeds 25 MiB limit")
+                    chunks.append(chunk)
+                content_type = response.headers.get("content-type", "")
+        except requests.RequestException as exc:
+            raise ChatAPIError(f"could not download image: {exc}") from exc
+        mime = content_type.split(";", 1)[0].strip() or _guess_mime(Path(parsed.path))
+        return self.upload_bytes(b"".join(chunks), mime=mime, media=True)
 
     def send_with_files(
         self,
@@ -371,14 +440,19 @@ class ChatClient:
         """,
             timeout=timeout,
         )
-        return cast(dict, res) if isinstance(res, dict) else {"status": -1, "txt": ""}
+        result = cast(dict, res) if isinstance(res, dict) else {"status": -1, "txt": ""}
+        self._raise_for_status(result)
+        return result
 
-    def _decode_json_body(self, res: dict) -> Any:
-        """Decode an application/json body from _post_json; raise on error."""
+    def _raise_for_status(self, res: dict) -> None:
         if res.get("status", 0) != 200:
             raise ChatAPIError(
                 f"HTTP {res.get('status')}: {res.get('txt')}", status=res.get("status")
             )
+
+    def _decode_json_body(self, res: dict) -> Any:
+        """Decode an application/json body from _post_json; raise on error."""
+        self._raise_for_status(res)
         try:
             return json.loads(res.get("txt", "") or "null")
         except json.JSONDecodeError as exc:

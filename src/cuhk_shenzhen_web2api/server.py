@@ -25,6 +25,7 @@ import json
 import logging
 import time
 import uuid
+from collections import OrderedDict
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -51,6 +52,8 @@ _shared: dict[str, Any] = {
 _default_model = "claude-haiku-4-5"
 _models_cache: dict[str, Any] = {"at": 0.0, "available": []}
 _MODELS_TTL = 300.0
+_MAX_RESPONSE_SESSIONS = 512
+_response_sessions: OrderedDict[str, tuple[str, int]] = OrderedDict()
 
 
 def _available_models(client: ChatClient) -> list[str]:
@@ -197,7 +200,39 @@ def _reply_summary(reply: ChatReply) -> dict[str, Any]:
     }
 
 
-def _slash(payload: str, client: ChatClient) -> dict[str, Any] | None:
+async def _browser_call(func, /, *args, **kwargs):
+    """Run a synchronous browser operation without blocking the event loop."""
+    async with _shared["lock"]:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+
+def _remember_response(response_id: str, reply: ChatReply) -> None:
+    if not reply.chat_session_id or reply.approach_msg_idx is None:
+        return
+    _response_sessions[response_id] = (reply.chat_session_id, reply.approach_msg_idx)
+    _response_sessions.move_to_end(response_id)
+    while len(_response_sessions) > _MAX_RESPONSE_SESSIONS:
+        _response_sessions.popitem(last=False)
+
+
+def _previous_response_context(
+    previous_response_id: str | None,
+) -> tuple[str | None, int]:
+    if not previous_response_id:
+        return None, -1
+    context = _response_sessions.get(previous_response_id)
+    if context is None:
+        raise HTTPException(
+            400, f"unknown previous_response_id {previous_response_id!r}"
+        )
+    return context
+
+
+def _health_snapshot(cb, client: ChatClient) -> tuple[str, Any]:
+    return cb.url(), client.whoami().get("body")
+
+
+async def _slash(payload: str, client: ChatClient) -> dict[str, Any] | None:
     """Handle /model slash commands; return None when the message is not one."""
     global _default_model
     if not payload.startswith("/"):
@@ -220,9 +255,10 @@ def _slash(payload: str, client: ChatClient) -> dict[str, Any] | None:
                 "mode": "slash",
                 "command": "/model",
                 "current": _default_model,
-                "available": _available_models(client),
+                "available": await _browser_call(_available_models, client),
             }
-        if arg not in _available_models(client):
+        available = await _browser_call(_available_models, client)
+        if arg not in available:
             raise HTTPException(400, f"unknown model {arg!r}")
         _default_model = arg
         return {"mode": "slash", "command": "/model", "set": arg, "current": arg}
@@ -234,16 +270,13 @@ app = FastAPI(title="cuhk-shenzhen-web2api", version="0.2.0")
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    body_bytes = await request.body()
-    body_preview = (
-        body_bytes[:500].decode("utf-8", errors="replace") if body_bytes else ""
-    )
     log.info(
-        ">>> %s %s [%s] body=%s",
+        ">>> %s %s [%s] content_length=%s content_type=%s",
         request.method,
         request.url.path,
         request.client.host if request.client else "?",
-        body_preview,
+        request.headers.get("content-length", "-"),
+        request.headers.get("content-type", "-"),
     )
     response = await call_next(request)
     log.info("<<< %s %s -> %d", request.method, request.url.path, response.status_code)
@@ -254,14 +287,17 @@ async def log_requests(request: Request, call_next):
 async def health() -> Health:
     try:
         client = await _runtime()
+        cb = _shared["cb"]
+        url, user = await _browser_call(_health_snapshot, cb, client)
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
-    cb = _shared["cb"]
+    if url.startswith(("ERROR", "EXEC_ERR", "RATE_LIMIT")):
+        raise HTTPException(503, url)
     browser_settings = _shared["settings"]
     return Health(
         session_id=cb.sid,
-        url=cb.url(),
-        user=client.whoami().get("body"),
+        url=url,
+        user=user,
         browser=browser_settings.describe() if browser_settings is not None else None,
     )
 
@@ -272,7 +308,7 @@ async def model_info() -> dict[str, Any]:
     client = await _runtime()
     return {
         "current": _default_model,
-        "available": await asyncio.to_thread(_available_models, client),
+        "available": await _browser_call(_available_models, client),
     }
 
 
@@ -281,7 +317,7 @@ async def switch_model(switch: ModelSwitch) -> dict[str, Any]:
     """Switch the server-wide default model (validates against the catalog)."""
     global _default_model
     client = await _runtime()
-    available = await asyncio.to_thread(_available_models, client)
+    available = await _browser_call(_available_models, client)
     if switch.approach_id not in available:
         raise HTTPException(400, f"unknown model {switch.approach_id!r}")
     _default_model = switch.approach_id
@@ -297,7 +333,7 @@ async def chat(req: ChatRequest) -> dict[str, Any]:
     with / are treated as slash commands (see /help), not sent to the model.
     """
     client = await _runtime()
-    slash = _slash(req.message, client)
+    slash = await _slash(req.message, client)
     if slash is not None:
         return slash
     async with _shared["lock"]:
@@ -325,12 +361,14 @@ async def chat(req: ChatRequest) -> dict[str, Any]:
 
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
-    """SSE streaming: yields NDJSON events as they arrive (text chunks, tools, end).
+    """SSE framing over the buffered chat events (text chunks, tools, end).
 
-    Response format: `data: <json>\n\n` per event. Client can parse incrementally.
+    The upstream browser call currently returns the full NDJSON body before this
+    endpoint emits events, so time-to-first-byte follows normal chat latency.
+    Response format: `data: <json>\n\n` per event.
     """
     client = await _runtime()
-    slash = _slash(req.message, client)
+    slash = await _slash(req.message, client)
     if slash is not None:
         return slash
 
@@ -375,10 +413,10 @@ async def response(req: ChatRequest) -> dict[str, Any] | StreamingResponse:
 
     Supports both streaming and non-streaming responses via the `stream` parameter.
     When stream=false (default), returns the complete reply as JSON.
-    When stream=true, returns SSE events as they arrive.
+    When stream=true, returns SSE events after the upstream reply is buffered.
     """
     client = await _runtime()
-    slash = _slash(req.message, client)
+    slash = await _slash(req.message, client)
     if slash is not None:
         return slash
 
@@ -439,38 +477,77 @@ async def response(req: ChatRequest) -> dict[str, Any] | StreamingResponse:
 def _extract_user_message(
     inp: str | list[dict[str, Any]],
 ) -> tuple[str, list[str]]:
-    """Pull the plain-text user message and any image URLs out of `input`."""
+    """Pull the latest user text and image sources out of Responses input."""
     if isinstance(inp, str):
         return inp, []
     parts: list[str] = []
     image_urls: list[str] = []
     for msg in inp:
-        if msg.get("role") == "user":
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                parts.append(content)
-            elif isinstance(content, list):
-                for c in content:
-                    if isinstance(c, dict):
-                        if c.get("type") == "input_text":
-                            parts.append(c.get("text", ""))
-                        elif c.get("type") == "input_image":
-                            image_urls.append(c.get("url", "") or c.get("file_id", ""))
-                        elif c.get("type") == "image_url":
-                            url_obj = c.get("image_url", {})
-                            image_urls.append(
-                                url_obj.get("url", "")
-                                if isinstance(url_obj, dict)
-                                else ""
-                            )
-                    elif isinstance(c, str):
-                        parts.append(c)
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            parts.append(content)
+            continue
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("type")
+            if kind == "input_text":
+                parts.append(str(item.get("text", "")))
+            elif kind == "input_image":
+                source = item.get("image_url") or item.get("url") or item.get("file_id")
+                if isinstance(source, dict):
+                    source = source.get("url")
+                if isinstance(source, str) and source:
+                    image_urls.append(source)
+            elif kind == "image_url":
+                url_obj = item.get("image_url")
+                if isinstance(url_obj, dict):
+                    url_obj = url_obj.get("url")
+                if isinstance(url_obj, str) and url_obj:
+                    image_urls.append(url_obj)
     return "\n".join(parts) if parts else "", image_urls
 
 
-def _format_responses_output(reply: ChatReply, model: str) -> dict[str, Any]:
+def _upload_response_images(client: ChatClient, sources: list[str]) -> tuple[str, ...]:
+    return tuple(client.upload_image_source(source) for source in sources)
+
+
+def _compose_response_message(user_msg: str, instructions: str | None) -> str:
+    if not instructions:
+        return user_msg
+    instruction_block = f"System instructions:\n{instructions.strip()}"
+    return (
+        f"{instruction_block}\n\nUser message:\n{user_msg}"
+        if user_msg
+        else instruction_block
+    )
+
+
+def _unsupported_response_fields(req: ResponsesRequest) -> list[str]:
+    unsupported: list[str] = []
+    if req.temperature is not None:
+        unsupported.append("temperature")
+    if req.max_output_tokens is not None:
+        unsupported.append("max_output_tokens")
+    return unsupported
+
+
+def _format_responses_output(
+    reply: ChatReply,
+    model: str,
+    *,
+    resp_id: str | None = None,
+    unsupported_parameters: list[str] | None = None,
+) -> dict[str, Any]:
     """Convert a ChatReply into the OpenAI Responses API JSON shape."""
-    resp_id = f"resp_{uuid.uuid4().hex[:24]}"
+    resp_id = resp_id or f"resp_{uuid.uuid4().hex[:24]}"
     now = int(time.time())
     output: list[dict[str, Any]] = []
     if reply.text:
@@ -502,6 +579,7 @@ def _format_responses_output(reply: ChatReply, model: str) -> dict[str, Any]:
             "chat_session_id": reply.chat_session_id,
             "approach_msg_idx": reply.approach_msg_idx,
             "title": reply.title,
+            "unsupported_parameters": unsupported_parameters or [],
         },
     }
 
@@ -533,16 +611,27 @@ async def openai_responses(
 
     Accepts the format used by Codex / CC Switch and translates it into
     the underlying CUHK chat API, then re-formats the reply to match
-    the Responses API schema.
+    the Responses API schema. The upstream API does not expose system
+    prompts or generation controls, so instructions are prepended and
+    unsupported controls are reported in response metadata.
     """
     model = _resolve_model(req.model)
     user_msg, image_urls = _extract_user_message(req.input)
-    if not user_msg:
+    if not user_msg and not image_urls:
         raise HTTPException(400, "input must contain a user message")
+    chat_session_id, parent_idx = _previous_response_context(req.previous_response_id)
+    message = _compose_response_message(user_msg, req.instructions)
+    unsupported = _unsupported_response_fields(req)
+    if unsupported:
+        log.warning(
+            "ignoring unsupported Responses parameters for %s: %s",
+            model,
+            ", ".join(unsupported),
+        )
 
     client = await _runtime()
 
-    # Check for image input — only vision-capable models can handle this
+    # Check for image input — only vision-capable models can handle this.
     _VISION_MODELS = {"claude-haiku-4-5", "gpt-5.6-luna"}
     if image_urls and model not in _VISION_MODELS:
         err_msg = (
@@ -591,17 +680,13 @@ async def openai_responses(
             )
         return _format_responses_error(err_msg, model, resp_id=resp_id)
 
-    # Build params
-    params: dict[str, Any] | None = None
-    if req.tools:
-        params = {"tool_proxy": True}
+    params: dict[str, Any] | None = {"tool_proxy": True} if req.tools else None
 
     if req.stream:
 
         async def responses_event_generator():
             resp_id = f"resp_{uuid.uuid4().hex[:24]}"
             now = int(time.time())
-            # response.created
             yield (
                 "data: "
                 + json.dumps(
@@ -620,7 +705,6 @@ async def openai_responses(
                 )
                 + "\n\n"
             )
-            # response.in_progress
             yield (
                 "data: "
                 + json.dumps(
@@ -634,14 +718,24 @@ async def openai_responses(
             )
 
             async with _shared["lock"]:
+                image_ids = (
+                    await asyncio.to_thread(_upload_response_images, client, image_urls)
+                    if image_urls
+                    else ()
+                )
                 reply = await asyncio.to_thread(
                     client.send_stream,
-                    user_msg,
+                    message,
                     approach_id=model,
+                    chat_session_id=chat_session_id,
+                    parent_idx=parent_idx,
                     params=params,
+                    image_ids=image_ids,
                 )
+            _remember_response(resp_id, reply)
 
-            # Emit text delta events
+            # Emit text delta events. The upstream browser call is buffered,
+            # so this is SSE framing rather than true token-by-token streaming.
             if reply.text:
                 msg_id = f"msg_{uuid.uuid4().hex[:24]}"
                 yield (
@@ -730,9 +824,12 @@ async def openai_responses(
                     + "\n\n"
                 )
 
-            # response.completed
-            completed = _format_responses_output(reply, model)
-            completed["id"] = resp_id
+            completed = _format_responses_output(
+                reply,
+                model,
+                resp_id=resp_id,
+                unsupported_parameters=unsupported,
+            )
             yield (
                 "data: "
                 + json.dumps(
@@ -747,22 +844,37 @@ async def openai_responses(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
-    else:
-        async with _shared["lock"]:
-            reply = await asyncio.to_thread(
-                client.send_stream,
-                user_msg,
-                approach_id=model,
-                params=params,
-            )
-        return _format_responses_output(reply, model)
+
+    resp_id = f"resp_{uuid.uuid4().hex[:24]}"
+    async with _shared["lock"]:
+        image_ids = (
+            await asyncio.to_thread(_upload_response_images, client, image_urls)
+            if image_urls
+            else ()
+        )
+        reply = await asyncio.to_thread(
+            client.send_stream,
+            message,
+            approach_id=model,
+            chat_session_id=chat_session_id,
+            parent_idx=parent_idx,
+            params=params,
+            image_ids=image_ids,
+        )
+    _remember_response(resp_id, reply)
+    return _format_responses_output(
+        reply,
+        model,
+        resp_id=resp_id,
+        unsupported_parameters=unsupported,
+    )
 
 
 @app.get("/v1/models")
 async def openai_models() -> dict[str, Any]:
     """OpenAI-compatible model list endpoint."""
     client = await _runtime()
-    available = await asyncio.to_thread(_available_models, client)
+    available = await _browser_call(_available_models, client)
     models = []
     for name in available:
         models.append(

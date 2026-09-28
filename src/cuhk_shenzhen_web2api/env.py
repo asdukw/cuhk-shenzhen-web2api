@@ -30,9 +30,12 @@ def load_env() -> dict[str, str]:
             if line and not line.startswith("#") and "=" in line:
                 k, _, v = line.partition("=")
                 env[k.strip()] = v.strip().strip('"').strip("'")
+    # Process environment values override .env, including when .env contains
+    # an empty placeholder such as USERNAME= or PASSWORD=.
     for key in KNOWN_KEYS:
-        if key not in env and os.environ.get(key):
-            env[key] = os.environ[key]
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
     return env
 
 

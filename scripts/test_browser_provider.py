@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import patch
 
 from cuhk_shenzhen_web2api import browser_provider as bp
+from cuhk_shenzhen_web2api import env
 from cuhk_shenzhen_web2api.steel_browser import SteelBrowser, SteelBrowserError
 
 FAILURES: list[str] = []
@@ -51,6 +52,29 @@ expect_error(
 )
 expect_error("unknown backend", {"BROWSER_BACKEND": "other"}, "must be steel-local")
 expect_error("bad Steel timeout", {"STEEL_EXECUTOR_TIMEOUT": "slow"}, "is not a number")
+
+with (
+    TemporaryDirectory() as directory,
+    patch.object(env, "ENV_FILE", Path(directory) / ".env"),
+):
+    Path(directory, ".env").write_text(
+        "USERNAME=\nPASSWORD=\n",
+        encoding="utf-8",
+    )
+    with patch.dict(
+        os.environ,
+        {"USERNAME": "process-user", "PASSWORD": "process-password"},
+        clear=False,
+    ):
+        values = env.load_env()
+        check(
+            "process env overrides empty .env user", values["USERNAME"], "process-user"
+        )
+        check(
+            "process env overrides empty .env password",
+            values["PASSWORD"],
+            "process-password",
+        )
 
 with (
     TemporaryDirectory() as directory,

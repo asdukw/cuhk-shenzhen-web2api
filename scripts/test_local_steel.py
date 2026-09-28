@@ -24,7 +24,9 @@ class ManagedLocalSteelTests(unittest.TestCase):
 
     def test_keeps_existing_stack_running(self) -> None:
         with (
-            patch.object(local_steel, "_running_services", return_value={"steel", "executor"}),
+            patch.object(
+                local_steel, "_running_services", return_value={"steel", "executor"}
+            ),
             patch.object(local_steel, "_compose") as compose,
             patch.object(local_steel, "_wait_ready"),
         ):
@@ -52,11 +54,15 @@ class ManagedLocalSteelTests(unittest.TestCase):
         with (
             patch.object(local_steel, "_running_services", return_value=set()),
             patch.object(local_steel, "_compose") as compose,
-            patch.object(local_steel, "_wait_ready", side_effect=RuntimeError("not ready")),
+            patch.object(
+                local_steel, "_wait_ready", side_effect=RuntimeError("not ready")
+            ),
         ):
-            with self.assertRaisesRegex(RuntimeError, "not ready"):
-                with local_steel.managed_local_steel():
-                    pass
+            with (
+                self.assertRaisesRegex(RuntimeError, "not ready"),
+                local_steel.managed_local_steel(),
+            ):
+                pass
             self.assertEqual(compose.call_args_list[-1].args, ("down",))
 
 

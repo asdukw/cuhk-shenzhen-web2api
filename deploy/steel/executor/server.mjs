@@ -163,24 +163,36 @@ function evaluate(code) {
 }
 
 async function executeSerial(code, timeoutSeconds) {
-  const run = async () => {
-    if (!state) throw new Error("no browser session is open");
-    const timeout = Math.max(1, Number(timeoutSeconds) || 120) * 1000;
-    let timer;
-    try {
-      return await Promise.race([
-        evaluate(code),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error("execution timed out")), timeout);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-  const pending = evaluationTail.then(run, run);
-  evaluationTail = pending.catch(() => {});
-  return pending;
+  const previous = evaluationTail;
+  let release;
+  // Keep the queue blocked until the underlying REPL evaluation settles,
+  // even when the caller receives a timeout result first.
+  evaluationTail = new Promise((resolve) => {
+    release = resolve;
+  });
+  await previous.catch(() => {});
+
+  const timeoutMs = Math.max(1, Number(timeoutSeconds) || 120) * 1000;
+  let timer;
+  try {
+    const evaluation = Promise.resolve().then(() => {
+      if (!state) throw new Error("no browser session is open");
+      return evaluate(code);
+    });
+    const settled = evaluation.then(
+      (value) => ({ ok: true, value }),
+      (error) => ({ ok: false, error }),
+    ).finally(release);
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+    });
+    const outcome = await Promise.race([settled, timeout]);
+    if (outcome.timedOut) throw new Error("execution timed out");
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const server = http.createServer(async (request, response) => {

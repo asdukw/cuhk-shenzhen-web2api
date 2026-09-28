@@ -8,8 +8,10 @@ This script tests the tool proxy by:
 
 from cuhk_shenzhen_web2api.tool_proxy import (
     ToolCall,
-    ToolParameters,
+    ToolDefinition,
+    ToolHandler,
     ToolParameterProperty,
+    ToolParameters,
     get_default_proxy,
     register_tool,
 )
@@ -20,11 +22,33 @@ def test_tool(arguments: dict) -> str:
     return f"Echo: {arguments}"
 
 
+class MismatchedNameHandler(ToolHandler):
+    """A deliberately invalid handler used to test registry validation."""
+
+    def execute(self, arguments: dict) -> str:
+        return str(arguments)
+
+    def get_definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="advertised_name",
+            description="Mismatched definition",
+            parameters=ToolParameters(),
+        )
+
+
 def main():
     print("=== Testing Tool Proxy ===")
 
     # Get the default proxy
     proxy = get_default_proxy()
+
+    # A handler definition name must match its registry key.
+    try:
+        proxy.registry.register("registered_name", MismatchedNameHandler())
+    except ValueError as exc:
+        print(f"   Expected registry validation error: {exc}")
+    else:
+        raise AssertionError("mismatched handler name was accepted")
 
     # Register a test tool
     print("\n1. Registering test tool...")

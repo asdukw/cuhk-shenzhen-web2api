@@ -114,8 +114,14 @@ class ToolRegistry:
         """
         if name in self._handlers:
             raise ValueError(f"Tool '{name}' is already registered")
+        definition = handler.get_definition()
+        if definition.name != name:
+            raise ValueError(
+                f"Tool handler definition name {definition.name!r} does not match "
+                f"registration name {name!r}"
+            )
         self._handlers[name] = handler
-        self._definitions[name] = handler.get_definition()
+        self._definitions[name] = definition
 
     def register_function(
         self,
@@ -251,10 +257,12 @@ class ToolProxy:
             arguments = json.loads(tool_call.function.get("arguments", "{}"))
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Invalid tool arguments JSON: {e}") from e
+        if not isinstance(arguments, dict):
+            raise TypeError("Tool arguments JSON must decode to an object")
 
         try:
             result = handler.execute(arguments)
-        except (ValueError, RuntimeError, KeyError) as e:
+        except Exception as e:  # noqa: BLE001 - return handler failures to the caller
             result = f"Tool execution failed: {e}"
 
         # Log execution
@@ -286,7 +294,7 @@ class ToolProxy:
             try:
                 result = self.execute_tool_call(tc)
                 results.append(result)
-            except (ValueError, RuntimeError, KeyError) as e:
+            except (TypeError, ValueError, RuntimeError, KeyError) as e:
                 results.append(
                     ToolResult(
                         tool_call_id=tc.id,
