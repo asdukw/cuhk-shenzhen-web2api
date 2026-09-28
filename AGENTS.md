@@ -18,24 +18,30 @@ The project uses a `src` layout, `uv`, `uv_build`, FastAPI, Ruff, and Pyright. T
 - `src/cuhk_shenzhen_web2api/server.py`: FastAPI and compatibility endpoints.
 - `src/cuhk_shenzhen_web2api/tool_proxy.py`: tool registration and execution.
 - `src/cuhk_shenzhen_web2api/scripts/`: thin runners for login, chat, probing, serving.
-- `deploy/steel/`: loopback-only Steel browser and Node JavaScript executor.
+- `deploy/steel/`: the Node JavaScript executor; Steel itself is installed into `.steel/` by the setup script.
 - `scripts/`: manual tests and service helpers; shared logic belongs in the package.
 - `docs/tool_proxy.md`: tool-proxy API details.
 - `data/`: gitignored sessions, cookies, replies, scans, downloaded bundles.
 
 ## Setup and local backend
 
-Use Windows PowerShell. Install `uv` and Python 3.12, then run `uv sync`. Copy `.env.example` to `.env` and fill in `USERNAME`/`PASSWORD` or `CHAT_USERNAME`/`CHAT_PASSWORD` (the `CHAT_*` aliases take precedence). No hosted browser API key is needed. Only `BROWSER_BACKEND=steel-local` (or `steel`/`local`) is accepted; unset also defaults to Steel. An old cloud backend selection fails explicitly.
+Use Windows PowerShell. Install `uv`, Python 3.12, Node.js 22+, npm, and Google Chrome/Chromium, then run `uv sync`. Install the pinned Steel source with `.\scripts\local_steel.ps1 setup`. Copy `.env.example` to `.env` and fill in `USERNAME`/`PASSWORD` or `CHAT_USERNAME`/`CHAT_PASSWORD` (the `CHAT_*` aliases take precedence). `USERNAME`/`PASSWORD` are read from `.env` only so Windows' own `USERNAME` cannot override project credentials. No hosted browser API key is needed. Only `BROWSER_BACKEND=steel-local` (or `steel`/`local`) is accepted; unset also defaults to Steel. An old cloud backend selection fails explicitly.
 
 | Variable | Meaning |
 | --- | --- |
 | `STEEL_EXECUTOR_URL` | Local executor URL, default `http://127.0.0.1:3003`. |
-| `STEEL_EXECUTOR_TOKEN` | Shared executor token, default `steel-local-only`; override on shared machines in both `.env` files. |
+| `STEEL_EXECUTOR_TOKEN` | Shared executor token, default `steel-local-only`; override on shared machines. |
 | `STEEL_EXECUTOR_TIMEOUT` | Executor HTTP timeout in seconds, default 130. |
+| `STEEL_SOURCE_DIR` | Steel source checkout, default `.steel/steel-browser`. |
+| `STEEL_REVISION` | Pinned Steel commit. |
+| `STEEL_API_PORT` / `STEEL_CDP_PORT` | Node Steel ports, defaults 3000 / 9223. |
+| `CHROME_EXECUTABLE_PATH` | Chrome/Chromium executable; auto-detected when possible. |
+| `CHROME_USER_DATA_DIR` | Persistent browser profile, default `data/steel/chrome-profile`. |
 
 Start and verify the repository-managed stack:
 
 ```powershell
+.\scripts\local_steel.ps1 setup
 .\scripts\local_steel.ps1 up
 .\scripts\local_steel.ps1 verify
 .\scripts\local_steel.ps1 status
@@ -43,9 +49,9 @@ Start and verify the repository-managed stack:
 .\scripts\local_steel.ps1 down
 ```
 
-`verify` opens `https://example.com` in a temporary tab without disturbing an authenticated page. The executor accepts arbitrary JavaScript, so it is token-protected and loopback-only. Its named Docker volume preserves the Chromium profile. Session IDs live at `data/chat_session/steel_session_id.txt` and cannot be reused from another backend. The aTrust session is tied to the browser's egress IP.
+`verify` opens `https://example.com` in a temporary tab without disturbing an authenticated page. The executor accepts arbitrary JavaScript, so it is token-protected and loopback-only. The Node Steel API and executor write to `data/steel/`; the browser profile lives under `data/steel/chrome-profile`. Session IDs live at `data/chat_session/steel_session_id.txt` and cannot be reused from another backend. The aTrust session is tied to the browser's egress IP.
 
-If a dependency download or image pull stalls, retry via `HTTP_PROXY=http://127.0.0.1:7897` and `HTTPS_PROXY=http://127.0.0.1:7897` on the host, or `http://host.docker.internal:7897` inside Docker. Keep local service traffic out of the proxy via `NO_PROXY`/`no_proxy`; `browser_provider` adds the executor host without dropping existing entries. Never commit proxy credentials.
+If a dependency download stalls, retry via `HTTP_PROXY=http://127.0.0.1:7897` and `HTTPS_PROXY=http://127.0.0.1:7897`. Keep local service traffic out of the proxy via `NO_PROXY`/`no_proxy`; `browser_provider` adds the executor host without dropping existing entries. Never commit proxy credentials.
 
 Always invoke repository scripts with `.venv\Scripts\python.exe <script> 2>&1`. Bare `python` and `py` may resolve incorrectly; use `uv sync` for dependencies, updating both `pyproject.toml` and `uv.lock`.
 

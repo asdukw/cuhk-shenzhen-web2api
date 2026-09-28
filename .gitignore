@@ -22,3 +22,9 @@ data/
 .agents/
 .workbuddy-ai/
 .firecrawl/
+
+# Local Steel source checkout
+.steel/
+
+# Node dependencies
+node_modules/
