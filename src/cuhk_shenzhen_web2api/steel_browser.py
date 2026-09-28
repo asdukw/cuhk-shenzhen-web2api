@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from pathlib import Path
@@ -123,6 +124,32 @@ class SteelBrowser:
         except json.JSONDecodeError:
             return None
         return value if isinstance(value, (dict, list)) else None
+
+    def upload(
+        self,
+        data: bytes,
+        *,
+        mime: str,
+        endpoint: str,
+        filename: str = "upload.bin",
+        timeout: int = 240,
+    ) -> dict:
+        payload = {
+            "sessionId": self.sid,
+            "base64": base64.b64encode(data).decode("ascii"),
+            "mime": mime,
+            "endpoint": endpoint,
+            "filename": filename,
+            "timeout": timeout,
+        }
+        result = self._request(
+            "/session/upload",
+            payload,
+            timeout=max(self.request_timeout, timeout + 10),
+        )
+        if result.get("error"):
+            raise SteelBrowserError(str(result["error"]))
+        return result
 
     def url(self) -> str:
         return self.js("await page.url()")

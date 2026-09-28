@@ -17,6 +17,16 @@ class BrowserBackend(Protocol):
         self, code: str, timeout: int = 120, retries: int = 6
     ) -> dict | list | None: ...
 
+    def upload(
+        self,
+        data: bytes,
+        *,
+        mime: str,
+        endpoint: str,
+        filename: str = "upload.bin",
+        timeout: int = 240,
+    ) -> dict: ...
+
     def url(self) -> str: ...
 
     def is_alive(self) -> bool: ...

@@ -195,6 +195,49 @@ async function executeSerial(code, timeoutSeconds) {
   }
 }
 
+async function uploadBlob(connectedState, payload) {
+  const allowed = new Set(["/uploadMedia/", "/uploadFile/"]);
+  if (!allowed.has(payload.endpoint)) {
+    throw new Error("unsupported upload endpoint");
+  }
+  const timeout = Math.max(1, Number(payload.timeout) || 240) * 1000;
+  let timer;
+  try {
+    return await Promise.race([
+      connectedState.page.evaluate(
+        async ({ base64, mime, endpoint, filename }) => {
+          const bin = atob(base64);
+          const arr = new Uint8Array(bin.length);
+          for (let index = 0; index < bin.length; index += 1) {
+            arr[index] = bin.charCodeAt(index);
+          }
+          const form = new FormData();
+          form.append("file", new Blob([arr], { type: mime }), filename);
+          const csrf = document.cookie
+            .split(";")
+            .map((part) => part.trim())
+            .find((part) => part.startsWith("csrftoken="));
+          const headers = {};
+          if (csrf) headers["X-CSRFToken"] = csrf.slice(10);
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers,
+            body: form,
+            credentials: "include",
+          });
+          return { status: response.status, text: await response.text() };
+        },
+        payload,
+      ),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("upload timed out")), timeout);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const server = http.createServer(async (request, response) => {
   try {
     if (request.method === "GET" && request.url === "/health") {
@@ -227,6 +270,30 @@ const server = http.createServer(async (request, response) => {
         return json(response, 200, {
           result: value === undefined || value === null ? "" : String(value),
         });
+      } catch (error) {
+        return json(response, 200, { error: error?.message || String(error) });
+      }
+    }
+    if (request.url === "/session/upload") {
+      if (!state || (body.sessionId && body.sessionId !== state.sessionId)) {
+        await openSession(body.sessionId);
+      }
+      if (typeof body.base64 !== "string") {
+        return json(response, 400, { error: "base64 must be a string" });
+      }
+      if (typeof body.mime !== "string" || typeof body.endpoint !== "string") {
+        return json(response, 400, { error: "mime and endpoint must be strings" });
+      }
+      const filename = typeof body.filename === "string" ? body.filename : "upload.bin";
+      try {
+        const result = await uploadBlob(state, {
+          base64: body.base64,
+          mime: body.mime,
+          endpoint: body.endpoint,
+          filename,
+          timeout: body.timeout,
+        });
+        return json(response, 200, result);
       } catch (error) {
         return json(response, 200, { error: error?.message || String(error) });
       }

@@ -17,6 +17,36 @@ from cuhk_shenzhen_web2api.server import (
 )
 
 
+class FakeBrowser:
+    def __init__(self, response: dict) -> None:
+        self.response = response
+        self.code = ""
+        self.upload_args: dict | None = None
+
+    def js_json(self, code: str, timeout: int = 120, retries: int = 6) -> dict:
+        del timeout, retries
+        self.code = code
+        return self.response
+
+    def upload(
+        self,
+        data: bytes,
+        *,
+        mime: str,
+        endpoint: str,
+        filename: str = "upload.bin",
+        timeout: int = 240,
+    ) -> dict:
+        self.upload_args = {
+            "data": data,
+            "mime": mime,
+            "endpoint": endpoint,
+            "filename": filename,
+            "timeout": timeout,
+        }
+        return self.response
+
+
 class ResponsesHelpersTests(unittest.TestCase):
     def setUp(self) -> None:
         _response_sessions.clear()
@@ -63,6 +93,22 @@ class ResponsesHelpersTests(unittest.TestCase):
                 client.upload_data_url("data:image/png;base64,AA=="), "media-1"
             )
             upload.assert_called_once_with(b"\x00", mime="image/png", media=True)
+
+    def test_media_upload_uses_dedicated_browser_upload(self) -> None:
+        browser = FakeBrowser({"status": 200, "text": '{"media_id":"media-1"}'})
+        client = ChatClient(browser)  # type: ignore[arg-type]
+        self.assertEqual(
+            client.upload_bytes(b"png", mime="image/png", media=True), "media-1"
+        )
+        self.assertIsNotNone(browser.upload_args)
+        assert browser.upload_args is not None
+        self.assertEqual(browser.upload_args["endpoint"], "/uploadMedia/")
+        self.assertEqual(browser.upload_args["mime"], "image/png")
+
+    def test_file_upload_accepts_file_id_response(self) -> None:
+        browser = FakeBrowser({"status": 200, "text": '{"file_id":"file-1"}'})
+        client = ChatClient(browser)  # type: ignore[arg-type]
+        self.assertEqual(client.upload_bytes(b"pdf", media=False), "file-1")
 
 
 if __name__ == "__main__":

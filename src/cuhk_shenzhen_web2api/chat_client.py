@@ -296,7 +296,7 @@ class ChatClient:
     # ---- media/native upload ----
 
     def upload_path(self, path: str | Path, *, media: bool = False) -> str:
-        """Upload a local file to the chat service; return its media_id.
+        """Upload a local file to the chat service; return its upstream id.
 
         media=True goes to /uploadMedia/ (images/video), otherwise /uploadFile/.
         The bytes are pushed through the browser session, so keep files modest.
@@ -316,44 +316,29 @@ class ChatClient:
         media: bool = False,
     ) -> str:
         """Upload in-memory bytes and return the upstream media id."""
-        payload = base64.b64encode(data).decode("ascii")
         endpoint = UPLOAD_MEDIA_ENDPOINT if media else UPLOAD_FILE_ENDPOINT
-        res = self.cb.js_json(
-            f"""
-          var __b64 = {json.dumps(payload)};
-          var __mime = {json.dumps(mime)};
-          var __bin = atob(__b64);
-          var __arr = new Uint8Array(__bin.length);
-          for (var __i2 = 0; __i2 < __bin.length; __i2++) __arr[__i2] = __bin.charCodeAt(__i2);
-          var __blob = new Blob([__arr], {{type: __mime}});
-          var __r = await page.evaluate(async (blob) => {{
-            var csrf = document.cookie.split(";").map(s=>s.trim()).find(s=>s.indexOf("csrftoken=")===0);
-            var headers = {{"Content-Type": "application/octet-stream"}};
-            if (csrf) headers["X-CSRFToken"] = csrf.slice(10);
-            var resp = await fetch({json.dumps(endpoint)}, {{method: "POST", headers: headers,
-              body: blob, credentials: "include"}});
-            return {{status: resp.status, txt: await resp.text()}};
-          }}, __blob);
-          JSON.stringify(__r)
-        """,
-            timeout=240,
-        )
-        if not isinstance(res, dict):
-            raise ChatAPIError("upload failed: browser_execute error")
+        res = self.cb.upload(data, mime=mime, endpoint=endpoint)
         if res.get("status", 0) != 200:
             raise ChatAPIError(
-                f"upload HTTP {res.get('status')}: {res.get('txt')}",
+                f"upload HTTP {res.get('status')}: {res.get('text', '')}",
                 status=res.get("status"),
             )
-        body = res.get("txt", "")
+        body = res.get("text", "")
         try:
             data_obj = json.loads(body)
         except json.JSONDecodeError as exc:
             raise ChatAPIError(f"upload bad response: {body[:200]}") from exc
-        media_id = data_obj.get("media_id") if isinstance(data_obj, dict) else None
-        if not media_id:
-            raise ChatAPIError("upload response has no media_id", detail=data_obj)
-        return str(media_id)
+        if not isinstance(data_obj, dict):
+            raise ChatAPIError("upload response is not an object", detail=data_obj)
+        media_id = data_obj.get("media_id") if media else None
+        file_id = None
+        if not media:
+            file_id = data_obj.get("file_id") or data_obj.get("fileid")
+        uploaded_id = media_id or file_id
+        if not uploaded_id:
+            key = "media_id" if media else "file_id/fileid"
+            raise ChatAPIError(f"upload response has no {key}", detail=data_obj)
+        return str(uploaded_id)
 
     def upload_image_source(self, source: str, *, timeout: float = 30.0) -> str:
         """Upload a Responses API image source (data URL or HTTP URL)."""
